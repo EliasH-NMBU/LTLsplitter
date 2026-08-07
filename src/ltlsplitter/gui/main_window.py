@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
+from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.consistency_check import ConsistencyCheckPage
 from ltlsplitter.gui.pages.deployment import DeploymentPage
 from ltlsplitter.gui.pages.monitor_generation import MonitorGenerationPage
@@ -25,9 +26,12 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("LTLsplitter")
         self.resize(900, 600)
 
+        self.state = ProjectState()
+
         self.stack = QStackedWidget()
         for page_class in PAGE_CLASSES:
-            self.stack.addWidget(page_class())
+            self.stack.addWidget(page_class(self.state))
+        self.stack.currentChanged.connect(self._on_page_changed)
 
         self.back_button = QPushButton("Back")
         self.next_button = QPushButton("Next")
@@ -46,6 +50,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self._update_nav_buttons()
+        self.stack.widget(self.stack.currentIndex()).on_show()
 
     def go_back(self) -> None:
         self.stack.setCurrentIndex(self.stack.currentIndex() - 1)
@@ -54,6 +59,9 @@ class MainWindow(QMainWindow):
     def go_next(self) -> None:
         self.stack.setCurrentIndex(self.stack.currentIndex() + 1)
         self._update_nav_buttons()
+
+    def _on_page_changed(self, index: int) -> None:
+        self.stack.widget(index).on_show()
 
     def _update_nav_buttons(self) -> None:
         index = self.stack.currentIndex()
