@@ -11,11 +11,20 @@ class VariableType(str, Enum):
     ENUM = "enum"
 
 
+class VariableRole(str, Enum):
+    """Environment (input) vs. system-controlled (output) -- the distinction a GR(1)
+    realizability check needs to know which side of the game each variable is on."""
+
+    INPUT = "input"
+    OUTPUT = "output"
+
+
 @dataclass
 class Variable:
     name: str
     type: VariableType
     ros_node: str
+    role: VariableRole = VariableRole.INPUT
     min_value: float | None = None
     max_value: float | None = None
     enum_values: list[str] = field(default_factory=list)

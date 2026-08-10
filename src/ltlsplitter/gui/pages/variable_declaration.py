@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
-from ltlsplitter.core.models import Variable, VariableType
+from ltlsplitter.core.models import Variable, VariableRole, VariableType
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
 
@@ -33,6 +33,12 @@ class VariableDeclarationPage(WizardPage):
         self.type_combo = QComboBox()
         self.type_combo.addItems([t.value for t in VariableType])
         self.type_combo.currentTextChanged.connect(self._on_type_changed)
+        self.role_combo = QComboBox()
+        self.role_combo.addItems([r.value for r in VariableRole])
+        self.role_combo.setToolTip(
+            "Input: set by the environment/another node (read-only to the monitor).\n"
+            "Output: set by the system under monitoring -- needed for realizability checks."
+        )
         self.ros_node_edit = QLineEdit()
         self.min_spin = QDoubleSpinBox()
         self.min_spin.setRange(-_SPIN_RANGE, _SPIN_RANGE)
@@ -44,6 +50,7 @@ class VariableDeclarationPage(WizardPage):
 
         form.addRow("Name", self.name_edit)
         form.addRow("Type", self.type_combo)
+        form.addRow("Role", self.role_combo)
         form.addRow("ROS Node", self.ros_node_edit)
         form.addRow("Min", self.min_spin)
         form.addRow("Max", self.max_spin)
@@ -54,8 +61,8 @@ class VariableDeclarationPage(WizardPage):
         add_button.clicked.connect(self._on_add_variable)
         self.content_layout.addWidget(add_button)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Name", "Type", "Range/Values", "ROS Node"])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Name", "Type", "Role", "Range/Values", "ROS Node"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.content_layout.addWidget(self.table)
 
@@ -83,8 +90,9 @@ class VariableDeclarationPage(WizardPage):
             QMessageBox.warning(self, "Missing fields", "Name and ROS node are required.")
             return
         var_type = VariableType(self.type_combo.currentText())
+        role = VariableRole(self.role_combo.currentText())
 
-        variable = Variable(name=name, type=var_type, ros_node=ros_node)
+        variable = Variable(name=name, type=var_type, ros_node=ros_node, role=role)
         if var_type in _RANGE_TYPES:
             variable.min_value = self.min_spin.value()
             variable.max_value = self.max_spin.value()
@@ -114,5 +122,6 @@ class VariableDeclarationPage(WizardPage):
                 range_text = ""
             self.table.setItem(row, 0, QTableWidgetItem(variable.name))
             self.table.setItem(row, 1, QTableWidgetItem(variable.type.value))
-            self.table.setItem(row, 2, QTableWidgetItem(range_text))
-            self.table.setItem(row, 3, QTableWidgetItem(variable.ros_node))
+            self.table.setItem(row, 2, QTableWidgetItem(variable.role.value))
+            self.table.setItem(row, 3, QTableWidgetItem(range_text))
+            self.table.setItem(row, 4, QTableWidgetItem(variable.ros_node))

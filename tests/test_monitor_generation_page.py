@@ -1,0 +1,73 @@
+from pathlib import Path
+
+from ltlsplitter.core.project_state import ProjectState
+from ltlsplitter.gui.pages.monitor_generation import MonitorGenerationPage
+
+
+def test_on_show_lists_only_requirements_with_formulas(qtbot):
+    state = ProjectState(sub_requirements=["a", "b"])
+    state.spec_for("r1.1").ltl_formula = "G x"
+    page = MonitorGenerationPage(state)
+    qtbot.addWidget(page)
+
+    page.on_show()
+
+    assert page.requirement_list.count() == 1
+
+
+def test_generate_without_selection_shows_message(qtbot, monkeypatch):
+    shown = {}
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.monitor_generation.QMessageBox.information",
+        lambda *a, **kw: shown.setdefault("called", True),
+    )
+    state = ProjectState()
+    page = MonitorGenerationPage(state)
+    qtbot.addWidget(page)
+
+    page._on_generate_clicked()
+
+    assert shown.get("called")
+
+
+def test_generate_without_output_dir_shows_message(qtbot, monkeypatch, tmp_path):
+    shown = {}
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.monitor_generation.QMessageBox.information",
+        lambda *a, **kw: shown.setdefault("called", True),
+    )
+    state = ProjectState(sub_requirements=["a"])
+    state.spec_for("r1.1").ltl_formula = "G x"
+    page = MonitorGenerationPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    page.requirement_list.setCurrentRow(0)
+
+    page._on_generate_clicked()
+
+    assert shown.get("called")
+
+
+def test_generate_reports_not_implemented(qtbot, tmp_path):
+    state = ProjectState(sub_requirements=["a"])
+    state.spec_for("r1.1").ltl_formula = "G x"
+    page = MonitorGenerationPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    page.requirement_list.setCurrentRow(0)
+    page._output_dir = Path(tmp_path)
+
+    page._on_generate_clicked()
+
+    assert "not implemented" in page.status_label.text().lower()
+    assert state.generated_monitor_path == ""
+
+
+def test_on_show_displays_previously_generated_path(qtbot):
+    state = ProjectState(generated_monitor_path="/tmp/some/pkg")
+    page = MonitorGenerationPage(state)
+    qtbot.addWidget(page)
+
+    page.on_show()
+
+    assert "/tmp/some/pkg" in page.status_label.text()

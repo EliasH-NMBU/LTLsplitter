@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QMessageBox
 
+from ltlsplitter.core.models import VariableRole
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.variable_declaration import VariableDeclarationPage
 
@@ -20,7 +21,22 @@ def test_add_variable_appends_to_state_and_table(qtbot):
     assert state.variables[0].name == "speed"
     assert state.variables[0].min_value == 0
     assert state.variables[0].max_value == 10
+    assert state.variables[0].role == VariableRole.INPUT
     assert page.table.rowCount() == 1
+
+
+def test_add_variable_with_output_role(qtbot):
+    state = ProjectState()
+    page = VariableDeclarationPage(state)
+    qtbot.addWidget(page)
+
+    page.name_edit.setText("motor_on")
+    page.ros_node_edit.setText("/drive_node")
+    page.role_combo.setCurrentText("output")
+    page._on_add_variable()
+
+    assert state.variables[0].role == VariableRole.OUTPUT
+    assert page.table.item(0, 2).text() == "output"
 
 
 def test_enum_variable_stores_values(qtbot):

@@ -13,6 +13,7 @@ class ProjectState:
     sub_requirements: list[str] = field(default_factory=list)
     variables: list[Variable] = field(default_factory=list)
     specifications: dict[str, Specification] = field(default_factory=dict)
+    generated_monitor_path: str = ""
 
     def requirement_ids(self) -> list[str]:
         if self.sub_requirements:
