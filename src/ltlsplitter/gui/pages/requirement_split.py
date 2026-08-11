@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -11,9 +12,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ltlsplitter.core.llm_split import split_requirement
+from ltlsplitter.core.llm_split import MissingAPIKeyError, split_requirement
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
+
+_SETTINGS_ORG = "LTLsplitter"
+_SETTINGS_APP = "LTLsplitter"
+_API_KEY_SETTING = "anthropic/api_key"
 
 
 class RequirementSplitPage(WizardPage):
@@ -26,6 +31,16 @@ class RequirementSplitPage(WizardPage):
 
     def __init__(self, state: ProjectState, parent=None):
         super().__init__(state, parent)
+        self._settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+
+        api_key_row = QHBoxLayout()
+        api_key_row.addWidget(QLabel("Anthropic API key:"))
+        self.api_key_edit = QLineEdit(self._settings.value(_API_KEY_SETTING, ""))
+        self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_edit.setPlaceholderText("sk-ant-...")
+        self.api_key_edit.textChanged.connect(self._on_api_key_changed)
+        api_key_row.addWidget(self.api_key_edit, 1)
+        self.content_layout.addLayout(api_key_row)
 
         self.requirement_edit = QPlainTextEdit(self.state.original_requirement)
         self.requirement_edit.setPlaceholderText("The system shall ...")
@@ -57,18 +72,20 @@ class RequirementSplitPage(WizardPage):
     def _on_requirement_text_changed(self) -> None:
         self.state.original_requirement = self.requirement_edit.toPlainText()
 
+    def _on_api_key_changed(self, text: str) -> None:
+        self._settings.setValue(_API_KEY_SETTING, text)
+
     def _on_split_clicked(self) -> None:
         if not self.state.original_requirement.strip():
             QMessageBox.warning(self, "No requirement", "Enter a requirement first.")
             return
         try:
-            result = split_requirement(self.state.original_requirement)
-        except NotImplementedError:
-            QMessageBox.information(
-                self,
-                "Not implemented yet",
-                "LLM-based splitting isn't wired up yet — add sub-requirements manually below for now.",
-            )
+            result = split_requirement(self.state.original_requirement, api_key=self.api_key_edit.text().strip())
+        except MissingAPIKeyError as exc:
+            QMessageBox.information(self, "API key needed", str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 -- surface any Anthropic API/network failure
+            QMessageBox.critical(self, "Split failed", f"Couldn't split the requirement: {exc}")
             return
         self.state.sub_requirements = list(result.sub_requirements)
         self.sub_requirement_list.clear()

@@ -42,7 +42,7 @@ def test_split_without_requirement_warns_instead_of_crashing(qtbot, monkeypatch)
     assert called == [True]
 
 
-def test_split_reports_not_implemented(qtbot, monkeypatch):
+def test_split_without_api_key_prompts_for_one(qtbot, monkeypatch):
     called = []
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
     state = ProjectState(original_requirement="text")
@@ -52,3 +52,52 @@ def test_split_reports_not_implemented(qtbot, monkeypatch):
     page._on_split_clicked()
 
     assert called == [True]
+
+
+def test_split_success_populates_state(qtbot, monkeypatch):
+    from ltlsplitter.core.models import RequirementSplit
+
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.requirement_split.split_requirement",
+        lambda requirement, api_key=None: RequirementSplit(
+            original=requirement, sub_requirements=["r1.1 text", "r1.2 text"]
+        ),
+    )
+    state = ProjectState(original_requirement="text")
+    page = RequirementSplitPage(state)
+    qtbot.addWidget(page)
+    page.api_key_edit.setText("sk-ant-fake-key")
+
+    page._on_split_clicked()
+
+    assert state.sub_requirements == ["r1.1 text", "r1.2 text"]
+    assert page.sub_requirement_list.count() == 2
+
+
+def test_split_failure_shows_error(qtbot, monkeypatch):
+    called = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **kw: called.append(True))
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.requirement_split.split_requirement",
+        lambda requirement, api_key=None: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    state = ProjectState(original_requirement="text")
+    page = RequirementSplitPage(state)
+    qtbot.addWidget(page)
+    page.api_key_edit.setText("sk-ant-fake-key")
+
+    page._on_split_clicked()
+
+    assert called == [True]
+
+
+def test_api_key_persists_across_page_instances(qtbot):
+    state = ProjectState()
+    page1 = RequirementSplitPage(state)
+    qtbot.addWidget(page1)
+    page1.api_key_edit.setText("sk-ant-saved-key")
+
+    page2 = RequirementSplitPage(state)
+    qtbot.addWidget(page2)
+
+    assert page2.api_key_edit.text() == "sk-ant-saved-key"
