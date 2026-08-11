@@ -80,6 +80,21 @@ def _find_ogma() -> Path:
     )
 
 
+def patch_cmake_for_modern_ament(package_dir: Path) -> None:
+    """Ogma's generated CMakeLists.txt calls ament_target_dependencies(), which this
+    ROS2 release (Lyrical) has fully removed in favor of target_link_libraries() with
+    imported targets -- confirmed by hand while building this integration: colcon build
+    otherwise fails with 'Unknown CMake command "ament_target_dependencies"'."""
+    cmake_path = package_dir / "copilot" / "CMakeLists.txt"
+    if not cmake_path.is_file():
+        return
+    text = cmake_path.read_text()
+    old = "ament_target_dependencies(copilot\n  rclcpp\n  std_msgs\n)"
+    new = "target_link_libraries(copilot\n  rclcpp::rclcpp\n  ${std_msgs_TARGETS}\n)"
+    if old in text:
+        cmake_path.write_text(text.replace(old, new))
+
+
 def _sanitize_id(requirement_id: str) -> str:
     """Ogma turns the requirement id into a Haskell/C identifier (e.g. a `handler<Id>`
     function name) -- our ids like "r1.1" contain characters that aren't valid there."""
@@ -162,4 +177,5 @@ def generate_ros2_monitor(
             )
         raise RuntimeError(f"ogma failed:\n{output}")
 
+    patch_cmake_for_modern_ament(output_dir)
     return output_dir
