@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ltlsplitter.core.ogma import generate_ros2_monitor
+from ltlsplitter.core.ogma import ToolNotFoundError, generate_ros2_monitor
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
 
@@ -112,13 +112,10 @@ class MonitorGenerationPage(WizardPage):
             return
         spec = self.state.specifications[self._current_requirement_id]
         try:
-            package_dir = generate_ros2_monitor(spec, self._output_dir)
-        except NotImplementedError:
+            package_dir = generate_ros2_monitor(spec, self._output_dir, self.state.variables)
+        except ToolNotFoundError as exc:
             self.status_label.setStyleSheet("color: #666;")
-            self.status_label.setText(
-                "Not implemented yet -- this needs Ogma (github.com/nasa/ogma) installed, which "
-                "requires GHC/Cabal/Z3 (see docs/pipeline-design-research.md, stage 5)."
-            )
+            self.status_label.setText(str(exc))
             return
         except Exception as exc:  # noqa: BLE001 -- surface any ogma subprocess failure to the user
             self.status_label.setStyleSheet("color: #b00020;")

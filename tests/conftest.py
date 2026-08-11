@@ -33,3 +33,16 @@ requires_nuxmv = pytest.mark.skipif(
 requires_strix = pytest.mark.skipif(
     not _tool_available("STRIX_PATH", "strix"), reason="strix not installed"
 )
+
+
+def _ogma_available() -> bool:
+    from ltlsplitter.core.ogma import ToolNotFoundError, _find_ogma
+
+    try:
+        _find_ogma()
+        return True
+    except ToolNotFoundError:
+        return False
+
+
+requires_ogma = pytest.mark.skipif(not _ogma_available(), reason="ogma not installed")

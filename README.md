@@ -13,11 +13,11 @@ A GUI pipeline for splitting natural-language requirements into formal specs (LT
 5. **Monitor generation** — generate ROS2 runtime monitors via Ogma.
 6. **Deployment & live visualization** — deploy monitors against a live ROS2 system and show violations/state in real time.
 
-The GUI wizard (one page per stage) is fully wired up and navigable. Stages 2, 3, and 4 (variable declaration, spec authoring, consistency/realizability) are fully functional. Stages 1, 5, and 6 are still stubbed pending their external tool integrations — those pages call the stub, catch the tool-missing error, and tell you what's needed rather than pretending to work:
+The GUI wizard (one page per stage) is fully wired up and navigable. Stages 1–5 are fully functional. Stage 6 is still stubbed pending its external tool integration — that page calls the stub, catches the tool-missing error, and tells you what's needed rather than pretending to work:
 
-- **Stage 1** (`llm_split.py`): needs an LLM API client wired up.
-- **Stage 5** (`ogma.py`): needs NASA's Ogma installed (requires GHC/Cabal/Z3).
 - **Stage 6** (`ros_monitor.py`): needs a sourced ROS2 environment (rclpy).
+
+**Stage 5's known limitation:** Ogma's LTL parser (as installed, `ogma-cli` 1.15.0) accepts a single temporal operator wrapping an otherwise-propositional formula (`G (x)`, `H (x -> y)`) but not formulas with *nested* temporal operators — `G (x -> F y)`, one of the most common LTL patterns and exactly what stage 3 typically produces, fails with a misleadingly worded `cannot open input specification file` error. `ogma.py` detects that specific message and appends a clarifying note rather than leaving it cryptic, but there's no code-level workaround — it's a real limitation of the tool as installed, matching the project's own design doc, which flags the future-LTL → past-time-monitorable translation (`FRETish → pmLTL`) as an unsolved problem, not something this wiring papers over.
 
 ## Installing nuXmv and Strix (stage 4)
 
@@ -48,6 +48,22 @@ for lib in libxml2.so.2 libicuuc.so.70 libicudata.so.70; do ln -sf "$BUNDLED/$li
 ```
 
 `realizability.py` already does this automatically at runtime if `~/.local/share/ltlsplitter-tools/nuxmv-libshim` exists, so following the commands above (which create exactly that path) is enough — no extra configuration needed.
+
+## Installing Ogma (stage 5)
+
+Ogma is a Haskell package published on Hackage, built via `cabal`. This is the heaviest install in the pipeline — expect a long build.
+
+```bash
+sudo apt install -y ghc cabal-install z3 libz3-dev zlib1g-dev libbz2-dev libexpat1-dev g++
+cabal update
+cabal install --lib copilot copilot-core copilot-c99 copilot-language \
+    copilot-theorem copilot-libraries copilot-interpreter copilot-prettyprinter
+cabal install ogma-cli:ogma
+```
+
+`cabal install` symlinks the built binary to `~/.local/bin/ogma` automatically — no manual symlinking needed (`ogma.py` looks it up the same way as nuXmv/Strix: `OGMA_PATH` env var, then `PATH`, then `~/.local/bin/ogma`). Verify with `ogma --help`.
+
+`g++` specifically is easy to miss: the `digest` package (a transitive dependency of `ogma-cli`) needs a C++ compiler to build, and its failure mode (`ghc-9.10.3: C++ Compiler: could not execute: x86_64-linux-gnu-g++`) doesn't obviously point at a missing package.
 
 ## Development setup
 
