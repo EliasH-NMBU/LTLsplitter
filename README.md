@@ -92,6 +92,17 @@ sudo apt install -y ros-lyrical-desktop ros-dev-tools python3-colcon-common-exte
 
 `ROS_SETUP_BASH` (default `/opt/ros/lyrical/setup.bash`) and `LTL_DEMO_WS_SETUP_BASH` (default `~/ltl_demo_ws/install/setup.bash`) are configurable via env var if your paths differ — same convention as `NUXMV_PATH`/`STRIX_PATH`/`OGMA_PATH` above.
 
+**The demo's source lives in this repo under [`ros2_demo/`](ros2_demo/)** — `ltl_demo/` (the ROS2 package: detector, wander controller, launch file, world/robot SDF) and `ltl_monitor_gen/` (the Ogma-generated monitor package for this demo's requirement, `H (human_detected -> stopped)`, checked in as a working example). It needs to be built into a colcon workspace before "Launch Simulation" / "Start Monitoring" will find anything:
+
+```bash
+mkdir -p ~/ltl_demo_ws/src
+cp -r ros2_demo/ltl_demo ~/ltl_demo_ws/src/
+source /opt/ros/lyrical/setup.bash
+cd ~/ltl_demo_ws && colcon build --packages-select ltl_demo
+```
+
+(`ltl_monitor_gen/` doesn't need a manual build step — stage 6's `MonitorDeployment` copies and builds it into its own dedicated workspace automatically.)
+
 ## Development setup
 
 ```bash
