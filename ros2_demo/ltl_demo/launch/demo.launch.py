@@ -1,6 +1,7 @@
 """Brings up the whole LTLsplitter ROS2 demo: Gazebo + the world (with two
-humanoid stand-ins), the camera-equipped TurtleBot3, the RGB camera bridge, the
-human detector, and the reactive wander/safety-stop controller.
+humanoid stand-ins that blink in and out of place every 10s), the
+camera-equipped TurtleBot3, the RGB camera bridge, the human detector, and the
+reactive wander/safety-stop controller.
 
 Launched either directly (`ros2 launch ltl_demo demo.launch.py`) or from
 LTLsplitter's own "Launch Simulation" button on stage 6, which runs this same
@@ -96,12 +97,22 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
     )
 
+    # Exposes Gazebo's world "set_pose" service over ROS -- human_blinker uses it to
+    # teleport the human models in and out of place every 10s.
+    set_pose_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        arguments=["/world/default/set_pose@ros_gz_interfaces/srv/SetEntityPose"],
+        output="screen",
+    )
+
     detector = Node(package="ltl_demo", executable="detector", output="screen")
     wander = Node(package="ltl_demo", executable="wander", output="screen")
+    human_blinker = Node(package="ltl_demo", executable="human_blinker", output="screen")
 
     delayed = TimerAction(
         period=5.0,
-        actions=[spawn_robot, camera_bridge, detector, wander],
+        actions=[spawn_robot, camera_bridge, set_pose_bridge, detector, wander, human_blinker],
     )
 
     return LaunchDescription(

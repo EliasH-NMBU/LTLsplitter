@@ -32,6 +32,7 @@ setup(
         'console_scripts': [
             'detector = ltl_demo.detector:main',
             'wander = ltl_demo.wander:main',
+            'human_blinker = ltl_demo.human_blinker:main',
         ],
     },
 )
