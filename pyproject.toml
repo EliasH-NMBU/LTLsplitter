@@ -27,3 +27,7 @@ packages = ["src/ltlsplitter"]
 
 [tool.pytest.ini_options]
 qt_api = "pyside6"
+# ros2_demo/ltl_demo/test/ contains ROS2's own ament lint/test boilerplate (ament_flake8,
+# ament_mypy, etc.) -- those only run inside a sourced ROS2 environment via `colcon test`,
+# not this app's own venv, and pytest would otherwise fail collecting them.
+testpaths = ["tests"]

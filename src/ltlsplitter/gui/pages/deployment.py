@@ -122,7 +122,7 @@ class DeploymentPage(WizardPage):
         process.finished.connect(self._on_sim_finished)
         command = (
             f"source {_ROS_SETUP_BASH} && source {_LTL_DEMO_WS_SETUP_BASH} && "
-            "ros2 launch ltl_demo demo.launch.py"
+            "exec ros2 launch ltl_demo demo.launch.py"
         )
         process.start("bash", ["-c", command])
         self._sim_process = process

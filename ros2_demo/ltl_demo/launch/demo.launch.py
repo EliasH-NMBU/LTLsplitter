@@ -14,6 +14,7 @@ from launch.actions import (
     AppendEnvironmentVariable,
     ExecuteProcess,
     IncludeLaunchDescription,
+    SetEnvironmentVariable,
     TimerAction,
     UnsetEnvironmentVariable,
 )
@@ -33,6 +34,20 @@ _SNAP_ENV_VARS_TO_UNSET = [
     "GIO_MODULE_DIR", "LOCPATH",
 ]
 
+# On hybrid NVIDIA/integrated-GPU laptops, glvnd's default vendor selection lets Mesa try
+# (and fail) to create a DRI2 rendering context on the NVIDIA render node -- Gazebo's Ogre2
+# GUI then can't get a hardware context at all ("libEGL warning: egl: failed to create dri2
+# screen") and the window shows nothing. Forcing the NVIDIA glvnd vendor explicitly fixes it;
+# confirmed empirically (EGL warnings gone) on a GeForce RTX + AMD iGPU hybrid laptop. Only
+# applied if the NVIDIA EGL vendor file is actually present -- pointing glvnd at a
+# nonexistent vendor file would break EGL entirely on machines without an NVIDIA driver.
+_NVIDIA_EGL_VENDOR_FILE = Path("/usr/share/glvnd/egl_vendor.d/10_nvidia.json")
+_NVIDIA_RENDER_ENV_VARS = {
+    "__NV_PRIME_RENDER_OFFLOAD": "1",
+    "__GLX_VENDOR_LIBRARY_NAME": "nvidia",
+    "__EGL_VENDOR_LIBRARY_FILENAMES": str(_NVIDIA_EGL_VENDOR_FILE),
+}
+
 
 def generate_launch_description() -> LaunchDescription:
     ltl_demo_dir = get_package_share_directory("ltl_demo")
@@ -42,6 +57,11 @@ def generate_launch_description() -> LaunchDescription:
     robot_sdf_path = str(Path(ltl_demo_dir) / "urdf" / "gz_waffle_rgb.sdf.xacro")
 
     unset_snap_vars = [UnsetEnvironmentVariable(name) for name in _SNAP_ENV_VARS_TO_UNSET]
+    nvidia_render_vars = (
+        [SetEnvironmentVariable(name, value) for name, value in _NVIDIA_RENDER_ENV_VARS.items()]
+        if _NVIDIA_EGL_VENDOR_FILE.is_file()
+        else []
+    )
 
     set_resource_path = AppendEnvironmentVariable(
         "GZ_SIM_RESOURCE_PATH", str(Path(tb3_sim_dir) / "models")
@@ -85,5 +105,12 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     return LaunchDescription(
-        [*unset_snap_vars, set_resource_path, set_resource_path_parent, gz_sim, delayed]
+        [
+            *unset_snap_vars,
+            *nvidia_render_vars,
+            set_resource_path,
+            set_resource_path_parent,
+            gz_sim,
+            delayed,
+        ]
     )
