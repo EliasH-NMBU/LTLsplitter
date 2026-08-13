@@ -7,6 +7,7 @@ Launched either directly (`ros2 launch ltl_demo demo.launch.py`) or from
 LTLsplitter's own "Launch Simulation" button on stage 6, which runs this same
 command as a subprocess.
 """
+import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -35,13 +36,16 @@ _SNAP_ENV_VARS_TO_UNSET = [
     "GIO_MODULE_DIR", "LOCPATH",
 ]
 
-# On hybrid NVIDIA/integrated-GPU laptops, glvnd's default vendor selection lets Mesa try
-# (and fail) to create a DRI2 rendering context on the NVIDIA render node -- Gazebo's Ogre2
-# GUI then can't get a hardware context at all ("libEGL warning: egl: failed to create dri2
-# screen") and the window shows nothing. Forcing the NVIDIA glvnd vendor explicitly fixes it;
-# confirmed empirically (EGL warnings gone) on a GeForce RTX + AMD iGPU hybrid laptop. Only
-# applied if the NVIDIA EGL vendor file is actually present -- pointing glvnd at a
-# nonexistent vendor file would break EGL entirely on machines without an NVIDIA driver.
+# On hybrid NVIDIA/integrated-GPU laptops, glvnd's vendor selection for Gazebo's Ogre2
+# renderer has been observed to go either way across sessions on the same machine: usually
+# the default (auto) selection works fine, but occasionally it lets Mesa try (and fail) a
+# DRI2 context on the NVIDIA render node ("failed to create dri2 screen"), leaving the
+# window blank. Forcing the NVIDIA vendor fixes *that* failure mode -- but forcing it
+# unconditionally was empirically found to *cause a different* rendering crash
+# (GLXBadFBConfig / "Invalid parentWindowHandle") in sessions where the default already
+# worked. Since which failure mode (if any) shows up is session-dependent and not
+# detectable in advance, this is opt-in via LTL_DEMO_FORCE_NVIDIA_RENDER=1 rather than
+# automatic -- try it only if "Launch Simulation" produces a blank/black Gazebo window.
 _NVIDIA_EGL_VENDOR_FILE = Path("/usr/share/glvnd/egl_vendor.d/10_nvidia.json")
 _NVIDIA_RENDER_ENV_VARS = {
     "__NV_PRIME_RENDER_OFFLOAD": "1",
@@ -60,7 +64,7 @@ def generate_launch_description() -> LaunchDescription:
     unset_snap_vars = [UnsetEnvironmentVariable(name) for name in _SNAP_ENV_VARS_TO_UNSET]
     nvidia_render_vars = (
         [SetEnvironmentVariable(name, value) for name, value in _NVIDIA_RENDER_ENV_VARS.items()]
-        if _NVIDIA_EGL_VENDOR_FILE.is_file()
+        if os.environ.get("LTL_DEMO_FORCE_NVIDIA_RENDER") == "1" and _NVIDIA_EGL_VENDOR_FILE.is_file()
         else []
     )
 

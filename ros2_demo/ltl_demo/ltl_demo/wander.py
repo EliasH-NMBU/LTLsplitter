@@ -22,6 +22,7 @@ import rclpy
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from ros_gz_interfaces.srv import SetEntityPose
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
 
@@ -42,6 +43,13 @@ _HEADING_GAIN = 1.2
 # forward -- avoids arcing wide loops when the goal starts out behind the robot.
 _HEADING_ALIGN_THRESHOLD_RAD = math.radians(45)
 
+# Same world set_pose bridge human_blinker.py uses -- here to move the "goal_marker" red
+# sphere (defined in the world file) to visualize the current goal in the Gazebo GUI.
+_SET_POSE_SERVICE = "/world/default/set_pose"
+_GOAL_MARKER_ENTITY_NAME = "goal_marker"
+_GOAL_MARKER_Z_M = 0.15
+_ENTITY_TYPE_MODEL = 2
+
 
 def _wrap_to_pi(angle: float) -> float:
     return (angle + math.pi) % (2 * math.pi) - math.pi
@@ -61,6 +69,7 @@ class Wander(Node):
         self._pose_y = 0.0
         self._pose_yaw = 0.0
         self._have_odom = False
+        self._set_pose_client = self.create_client(SetEntityPose, _SET_POSE_SERVICE)
         self._goal_x, self._goal_y = self._sample_goal()
 
         self.create_subscription(LaserScan, "scan", self._on_scan, 10)
@@ -70,9 +79,21 @@ class Wander(Node):
         self._stopped_pub = self.create_publisher(Bool, "stopped", 10)
         self.create_timer(_CONTROL_PERIOD_S, self._on_control_tick)
 
-    @staticmethod
-    def _sample_goal() -> tuple[float, float]:
-        return random.uniform(*_GOAL_X_RANGE_M), random.uniform(*_GOAL_Y_RANGE_M)
+    def _sample_goal(self) -> tuple[float, float]:
+        x, y = random.uniform(*_GOAL_X_RANGE_M), random.uniform(*_GOAL_Y_RANGE_M)
+        request = SetEntityPose.Request()
+        request.entity.name = _GOAL_MARKER_ENTITY_NAME
+        request.entity.type = _ENTITY_TYPE_MODEL
+        request.pose.position.x = x
+        request.pose.position.y = y
+        request.pose.position.z = _GOAL_MARKER_Z_M
+        # The very first call (from __init__) can otherwise race the set_pose bridge Node's
+        # own startup -- both are launched at the same moment, and call_async silently drops
+        # the request if the client hasn't discovered the service yet. wait_for_service is
+        # safe to call here even though rclpy.spin() hasn't started yet.
+        self._set_pose_client.wait_for_service(timeout_sec=2.0)
+        self._set_pose_client.call_async(request)
+        return x, y
 
     def _on_human_detected(self, msg: Bool) -> None:
         self._human_detected = msg.data

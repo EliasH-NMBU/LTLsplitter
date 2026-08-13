@@ -141,5 +141,26 @@
         </collision>
       </link>
     </model>
+
+    <!-- Visualizes wander.py's current navigation goal -- wander.py teleports this via
+         Gazebo's world set_pose service every time it picks a new random goal. No
+         <collision> on purpose: it must stay invisible to the LIDAR-based obstacle
+         avoidance and human detection, it's purely a marker. -->
+    <model name="goal_marker">
+      <static>1</static>
+      <pose>0 0 0.15 0 0 0</pose>
+      <link name="marker">
+        <visual name="marker_visual">
+          <geometry>
+            <sphere><radius>0.12</radius></sphere>
+          </geometry>
+          <material>
+            <ambient>1 0 0 1</ambient>
+            <diffuse>1 0 0 1</diffuse>
+            <emissive>0.6 0 0 1</emissive>
+          </material>
+        </visual>
+      </link>
+    </model>
   </world>
 </sdf>
