@@ -127,3 +127,12 @@ python -m ltlsplitter.app
 ```bash
 pytest
 ```
+
+## Building a standalone Linux executable
+
+```bash
+pip install -e ".[build]"
+pyinstaller ltlsplitter.spec
+```
+
+Produces a single self-contained binary at `dist/ltlsplitter` — no Python interpreter or `.venv` activation needed to run it, since PyInstaller bundles the interpreter and all Python dependencies (PySide6, anthropic, etc.) inside. It does **not** bundle Ogma/nuXmv/Strix/ROS2 — those remain external CLI tools the binary shells out to at runtime, same as when running from source (see the install sections above), so they still need to be installed on whatever machine runs the binary. `ltlsplitter.spec` is checked in for a reproducible build; `dist/` and `build/` (PyInstaller's output directories) are gitignored since the binary is a large, platform-specific build artifact, not source.
