@@ -2,6 +2,16 @@
 
 Status: pre-implementation. This document captures technical research to ground the architecture before any code is written. Last updated 2026-08-06.
 
+> **2026-10-02 addendum:** the pipeline described below (6 stages, manual variable declaration,
+> live ROS2 deployment/simulation) shipped and worked end-to-end, but was then reworked toward a
+> different, leaner design: import an already-FRET-translated LTL spec, have an LLM propose and
+> perform a *formula-level* split (not NL-requirement splitting), cross-validate the split against
+> the original with three model checkers (nuXmv, Spot, SPIN) instead of one, check realizability
+> against the rest of the imported system, and export to Ogma — with variable declaration and the
+> live ROS2 deployment stage both dropped. See the README's "Pipeline stages" section for the
+> current design; §4 below (stage-by-stage findings) is still accurate background for the tools
+> each stage uses, it's just mapped onto fewer/different GUI stages now.
+
 ## 1. The pipeline (target)
 
 1. **LLM requirement splitting**: LLM splits a natural-language requirement into sub-requirements (r1.1 ∧ r1.2 ⇒ R1), keeping the original alongside the split for traceability.

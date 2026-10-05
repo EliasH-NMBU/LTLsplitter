@@ -168,6 +168,13 @@ def check_realizability(spec: Specification, inputs: list[str], outputs: list[st
     output = (result.stdout + result.stderr).strip()
     match = _REALIZABLE_RE.search(output)
     if not match:
+        if "no viable alternative" in output:
+            output += (
+                "\n\nThis usually means the formula uses an arithmetic/equality expression "
+                "(e.g. \"classifier = 1\") as an atomic proposition -- Strix's LTL parser only "
+                "accepts plain boolean propositions (bare identifiers), not comparisons over "
+                "typed variables."
+            )
         raise RuntimeError(f"Couldn't parse Strix output:\n{output[-2000:]}")
 
     realizable = match.group(1) is None

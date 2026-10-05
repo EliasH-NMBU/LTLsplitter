@@ -33,6 +33,12 @@ requires_nuxmv = pytest.mark.skipif(
 requires_strix = pytest.mark.skipif(
     not _tool_available("STRIX_PATH", "strix"), reason="strix not installed"
 )
+requires_spot = pytest.mark.skipif(
+    not _tool_available("SPOT_LTLFILT_PATH", "ltlfilt"), reason="Spot (ltlfilt) not installed"
+)
+requires_spin = pytest.mark.skipif(
+    not _tool_available("SPIN_PATH", "spin"), reason="SPIN not installed"
+)
 
 
 def _ogma_available() -> bool:

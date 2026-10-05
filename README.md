@@ -1,25 +1,57 @@
 # LTLsplitter
 
-A GUI pipeline for splitting natural-language requirements into formal specs (LTL or behavior trees), checking their consistency/realizability, and deploying live ROS2 runtime monitors generated via NASA's [Ogma](https://github.com/nasa/ogma).
+A GUI pipeline that imports a [NASA FRET](https://github.com/NASA-SW-VnV/fret) project export, uses an LLM to propose and perform a split of an LTL requirement into independent sub-properties, cross-validates that split with three different model checkers, checks realizability against the rest of the system, and exports the result to NASA's [Ogma](https://github.com/nasa/ogma) for ROS2 Copilot runtime-monitor generation.
 
-**Platform: Linux only.** See [docs/pipeline-design-research.md](docs/pipeline-design-research.md) for why (Ogma, Strix, and other tools in the pipeline are Linux-native only).
+**Platform: Linux only.** See [docs/pipeline-design-research.md](docs/pipeline-design-research.md) for why (Ogma, Strix, Spot, and SPIN are Linux-native only).
 
 ## Pipeline stages
 
-1. **Requirement splitting** — an LLM splits a natural-language requirement into sub-requirements for human review.
-2. **Variable declaration** — declare variables (type, range, ROS node).
-3. **Spec authoring** — author LTL or behavior-tree specs over the declared variables.
-4. **Consistency & realizability check** — verify the requirement set is satisfiable and realizable.
-5. **Monitor generation** — generate ROS2 runtime monitors via Ogma.
-6. **Deployment & live visualization** — deploy monitors against a live ROS2 system and show violations/state in real time.
+1. **Import & Split Review** — import a FRET project export (`requirements`/`variables` JSON), pick one requirement, and let an LLM suggest whether/how many ways to split its LTL formula. Review and accept or reject the suggestion; if accepted, the LLM performs the split into editable sub-formulas.
+2. **Decomposition Validation** — nuXmv, Spot, and SPIN each independently check that the sub-formulas' conjunction is logically equivalent to the original formula, and that no single sub-formula is -- by itself -- already equivalent to the whole original (i.e. it's a genuine split, not a degenerate one). A failure can be sent back to the LLM as feedback for another attempt.
+3. **Realizability Check** — checks whether a system strategy exists that satisfies the accepted formula(s) together with every *other* requirement already in the imported FRET file, against adversarial environment input — the "combined back with the entire system" check.
+4. **Ogma/Copilot Export** — generates a ROS2 Copilot runtime-verification monitor package via Ogma, one property per accepted sub-formula.
 
-The GUI wizard (one page per stage) is fully wired up and navigable, and **all six stages are fully functional**, verified end-to-end against a real (simulated) ROS2 system: a TurtleBot3 patrolling a Gazebo world, detecting a humanoid stand-in via its camera, safety-stopping in response, and an Ogma-generated LTL monitor confirming the safety property live against the running system with zero violations. See "The demo ROS2 system" below.
+### Which LTL form each stage uses
 
-**Stage 5's known limitation:** Ogma's LTL parser (as installed, `ogma-cli` 1.15.0) accepts a single temporal operator wrapping an otherwise-propositional formula (`G (x)`, `H (x -> y)`) but not formulas with *nested* temporal operators — `G (x -> F y)`, one of the most common LTL patterns and exactly what stage 3 typically produces, fails with a misleadingly worded `cannot open input specification file` error. `ogma.py` detects that specific message and appends a clarifying note rather than leaving it cryptic, but there's no code-level workaround — it's a real limitation of the tool as installed, matching the project's own design doc, which flags the future-LTL → past-time-monitorable translation (`FRETish → pmLTL`) as an unsolved problem, not something this wiring papers over.
+FRET exports every requirement in both a **past-time** form (`H`/`O`/`S`/`Y`, what the FRET/Ogma ecosystem calls pmLTL) and a **future-time** form (`G`/`F`/`X`/`U`). This pipeline doesn't pick just one -- each external tool gets whichever form it actually understands, confirmed empirically against the installed binaries, not assumed. It turns out **only nuXmv supports past-time operators** -- Spot and SPIN both only parse future-time LTL (`H`/`O` fail to parse on Spot; SPIN doesn't have the concept at all):
 
-## Installing nuXmv and Strix (stage 4)
+- **nuXmv** validates the **pt** form -- the same form that ultimately ships to Ogma.
+- **Spot** and **SPIN** both validate the **ft** form instead. Rather than implementing general past→future LTL translation (an open research problem -- see `docs/pipeline-design-research.md`), the LLM decomposition step is asked to produce both forms for each sub-formula directly, the same way FRET itself carries both forms per requirement.
+- **Strix** (stage 3, realizability) also only parses future-time LTL -- `strix -f "H (x -> y)"` fails with a parser error (`no viable alternative at input 'H'`). So stage 3 is built from the **ft** forms, not pt.
+- **Ogma** (stage 4) is given the **pt** forms, per Ogma/Copilot's own expectations (see the nested-operator note below).
 
-Neither ships as a distro package, so they're installed as standalone binaries rather than via `pip`/`apt`. `check_consistency`/`check_realizability` (`src/ltlsplitter/core/realizability.py`) look for them, in order: an `NUXMV_PATH`/`STRIX_PATH` env var pointing at the binary, then `PATH`, then `~/.local/bin/nuXmv` / `~/.local/bin/strix`. The convention below (symlinking into `~/.local/bin`) satisfies the last of those with no env var or PATH change needed.
+SPIN also needs its own operator spelling translated: `spin -f` uses symbolic `[]`/`<>` for always/eventually rather than the keywords `G`/`F` that every other tool here and FRET's export both use (`X`/`U`/`R`/`V`/`!`/`&`/`|`/`->`/`<->` all already match). `equivalence_check.py`'s `_to_spin_syntax()` does this translation before every `spin -f` call -- confirmed against the real binary.
+
+## Importing a FRET file
+
+Export a project from FRET (Menu → Export → "Export Requirements and Variables as JSON", or equivalent) to get a JSON file shaped like:
+
+```json
+{"requirements": [{"reqid": "...", "fulltext": "...", "semantics": {"pt": "...", "ptExpanded": "...", "ft": "...", "ftExpanded": "...", "ftInfAUExpanded": "...", "variables": ["..."]}}],
+ "variables": [{"variable_name": "...", "dataType": "boolean|integer|...", "idType": "Input|Output|Internal", "assignment": "...", "copilotAssignment": "..."}]}
+```
+
+`core/fret_import.py` reads `ptExpanded`/`pt` for the past-time form, and prefers `ftInfAUExpanded` over `ftExpanded`/`ft` for the future-time form -- `ft`/`ftExpanded` encode FRET's finite-trace semantics via a special `LAST` atomic proposition (e.g. `"LAST V (...)"`) that Spot/SPIN don't know about, while `ftInfAUExpanded` is the same obligation in plain infinite-trace future LTL. This was confirmed against a real FRET export, not assumed -- see a worked example under `tests/fixtures/sRobotFRETfile.json`.
+
+`Internal`-role variables (derived propositions, e.g. `dgt_3 := distance_to_target > 3`) carry two expressions: `assignment` (plain/Lustre-ish syntax, used as a nuXmv `DEFINE` during equivalence checking) and `copilotAssignment` (Copilot syntax, embedded into the generated monitor by Ogma) -- these are genuinely different syntaxes for the same thing, not redundant fields.
+
+## Strix/Spot/SPIN's shared known limitation (stages 2 and 3)
+
+**All three** of Strix, Spot, and SPIN only accept pure boolean atomic propositions (bare identifiers) as their LTL grammar's leaves — not arithmetic/equality expressions over typed variables, e.g. `classifier = 1` or `state = 2`, which is exactly what FRET-imported integer/enum variables produce. Confirmed directly against all three installed binaries:
+
+- `strix -f "G ((classifier = 1) -> x)"` → `no viable alternative at input '((classifier='`
+- `ltlfilt -f "G(distance_to_target > 3)"` → `syntax error, unexpected invalid token`
+- `spin -f "!(distance_to_target > 3)"` → the same kind of parse rejection
+
+**nuXmv is the only one of the four tools in this pipeline that natively understands typed/arithmetic FRET variables** (it has real `VAR`/`DEFINE` declarations with actual integer/enum domains, not just opaque boolean atoms) — this is inherent to each tool's own design (none of this is something this pipeline's wiring introduced or could silently paper over), but it means that for most real FRET-sourced requirements (which commonly compare an enum/int-typed variable, as the `tests/fixtures/sRobotFRETfile.json` example does throughout), **stage 2's Spot/SPIN checks and stage 3's Strix check will fail to parse the formula and report a clear error** rather than a silent wrong answer, leaving nuXmv as the sole working verdict for those requirements. There's no code-level workaround here yet: that would need a comparison→fresh-boolean-proposition rewrite step (predicate abstraction) applied before calling out to any of these three tools, which is real additional scope beyond this pass.
+
+## Ogma's known limitation (stage 4)
+
+Ogma's LTL parser (as installed, `ogma-cli` 1.15.0) accepts a single temporal operator wrapping an otherwise-propositional formula (`G (x)`, `H (x -> y)`) but not formulas with *nested* temporal operators — `G (x -> F y)`, one of the most common LTL patterns — which fails with a misleadingly worded `cannot open input specification file` error. `ogma.py` detects that specific message and appends a clarifying note rather than leaving it cryptic, but there's no code-level workaround — it's a real limitation of the tool as installed.
+
+## Installing nuXmv and Strix (stages 2 and 3)
+
+Neither ships as a distro package, so they're installed as standalone binaries rather than via `pip`/`apt`. `check_realizability` (`src/ltlsplitter/core/realizability.py`) and the nuXmv half of `validate_decomposition` (`src/ltlsplitter/core/equivalence_check.py`) look for them, in order: an `NUXMV_PATH`/`STRIX_PATH` env var pointing at the binary, then `PATH`, then `~/.local/bin/nuXmv` / `~/.local/bin/strix`. The convention below (symlinking into `~/.local/bin`) satisfies the last of those with no env var or PATH change needed.
 
 ```bash
 # nuXmv (non-commercial/academic license) -- verify the sha256sum published alongside
@@ -47,7 +79,37 @@ for lib in libxml2.so.2 libicuuc.so.70 libicudata.so.70; do ln -sf "$BUNDLED/$li
 
 `realizability.py` already does this automatically at runtime if `~/.local/share/ltlsplitter-tools/nuxmv-libshim` exists, so following the commands above (which create exactly that path) is enough — no extra configuration needed.
 
-## Installing Ogma (stage 5)
+## Installing Spot and SPIN (stage 2)
+
+SPIN is a standard Ubuntu/Debian package:
+
+```bash
+sudo apt install -y spin
+```
+
+This installs the `spin` binary used by the SPIN half of `validate_decomposition`'s equivalence checks (`SPIN_PATH` env var override, same lookup convention as the other tools). It additionally needs a C compiler to build the generated verifier (`pan.c`) -- `gcc` (already required for Ogma, see below) covers it.
+
+**Spot is not packaged for this release** (checked `apt-cache search` under every plausible name on Ubuntu "resolute" 26.04 -- not there, confirmed, not a configuration issue). Two options, in order of preference:
+
+1. **The LRE's own OBS-built `.deb` repo** (fastest if it works -- their newest build target at the time of writing is `xUbuntu_25.10`, one release behind; close enough to usually install cleanly, but not guaranteed):
+   ```bash
+   wget -q -O - 'https://build.opensuse.org/projects/home:adl/signing_keys/download?kind=gpg' | sudo gpg --dearmor -o /etc/apt/keyrings/home-adl-obs.gpg
+   echo 'deb [signed-by=/etc/apt/keyrings/home-adl-obs.gpg] https://download.opensuse.org/repositories/home:/adl/xUbuntu_25.10/ ./' | sudo tee /etc/apt/sources.list.d/home-adl-obs.list
+   sudo apt-get update && sudo apt-get install -y spot
+   ```
+2. **Build from source** (what was actually used to verify this integration -- reliable, ~10 minutes, no sudo needed if installed under your home directory):
+   ```bash
+   wget http://www.lre.epita.fr/dload/spot/spot-2.16.tar.gz
+   tar xf spot-2.16.tar.gz && cd spot-2.16
+   ./configure --prefix="$HOME/.local" --disable-python --disable-static
+   make -j"$(nproc)"
+   make install   # no sudo -- installs under ~/.local, already on PATH by convention here
+   ```
+   `--disable-python` skips Spot's Python bindings (not needed -- this project only shells out to the `ltlfilt` CLI) and avoids a `python3-dev` dependency.
+
+`SPOT_LTLFILT_PATH` env var override, same lookup convention as the other tools. The Spot integration (`_check_tautology_spot` in `src/ltlsplitter/core/equivalence_check.py`) has been verified against a real build: `--equivalent-to` takes an inline `FORMULA` directly (not a filename, despite that being the convention for most of Spot's other formula-reference options), and a formula is a tautology iff `ltlfilt --equivalent-to=1 -f FORMULA -q` exits 0.
+
+## Installing Ogma (stage 4)
 
 Ogma is a Haskell package published on Hackage, built via `cabal`. This is the heaviest install in the pipeline — expect a long build.
 
@@ -63,47 +125,6 @@ cabal install ogma-cli:ogma
 
 `g++` specifically is easy to miss: the `digest` package (a transitive dependency of `ogma-cli`) needs a C++ compiler to build, and its failure mode (`ghc-9.10.3: C++ Compiler: could not execute: x86_64-linux-gnu-g++`) doesn't obviously point at a missing package.
 
-## Installing ROS2 + the demo system (stage 6)
-
-This machine's Ubuntu 26.04 pairs with **ROS2 "Lyrical"** in the official ROS2 apt repo. This is the heaviest install in the whole pipeline (ROS2 desktop + Gazebo + vision packages — several GB).
-
-```bash
-curl -LO https://github.com/ros-infrastructure/ros-apt-source/releases/download/1.2.0/ros2-apt-source_1.2.0.resolute_all.deb
-sudo apt install -y ./ros2-apt-source_1.2.0.resolute_all.deb
-sudo apt update
-sudo apt install -y ros-lyrical-desktop ros-dev-tools python3-colcon-common-extensions \
-    python3-rosdep ros-lyrical-ros-gz-sim ros-lyrical-ros-gz-bridge ros-lyrical-ros-gz-image \
-    ros-lyrical-nav2-minimal-tb3-sim ros-lyrical-cv-bridge ros-lyrical-vision-opencv python3-opencv
-```
-
-**This ROS2 release doesn't ship classic Nav2** (`navigation2`/`nav2-bringup` aren't in the repo) — it's been replaced by a new framework called EasyNav (`ros-lyrical-easynav*`). The demo system (`~/ltl_demo_ws/src/ltl_demo`, not checked into this repo) doesn't depend on either: it drives the robot with a small reactive LIDAR-based wander/obstacle-avoidance controller instead of a full planning stack.
-
-**The "human" the camera detects** is a plain colored cylinder+sphere model placed in the world (`worlds/tb3_sandbox_human.sdf`), not a photorealistic mesh or animated actor — `detector.py` finds it via HSV color thresholding on the RGB camera feed, not a pedestrian classifier. The robot's stock camera sensor is depth-only (no RGB `image` topic); a copy of its SDF (`urdf/gz_waffle_rgb.sdf.xacro`) adds a real RGB camera sensor alongside it.
-
-**Environment-specific rendering issues to know about, already worked around in `launch/demo.launch.py`:**
-- If this whole app (or `ros2 launch` directly) runs from inside a snap-confined shell — e.g. a VSCode integrated terminal, since VSCode itself ships as a snap — Gazebo's GUI crashes immediately with `symbol lookup error: ... undefined symbol: __libc_pthread_init, version GLIBC_PRIVATE`. The launch file unsets the relevant snap/GTK env vars for the whole launch; none of them matter to Gazebo or any ROS node here.
-- The robot's visual meshes need `ROS_PACKAGE_PATH` set to resolve their `package://` URIs, or it spawns and works fully (physics/sensors/topics all fine) but renders with missing geometry in the GUI — cosmetic only, also handled in the launch file.
-- On hybrid NVIDIA/integrated-GPU laptops, if "Launch Simulation" produces a Gazebo window that opens but stays blank/black, glvnd's automatic vendor selection is likely picking a rendering path that can't get a hardware context on your setup. Set `LTL_DEMO_FORCE_NVIDIA_RENDER=1` before launching to force the NVIDIA glvnd vendor. This is opt-in rather than automatic on purpose: on the same machine, forcing it was empirically found to *cause* a different rendering crash (`GLXBadFBConfig`) in sessions where the default selection already worked fine — which failure mode (if any) shows up appears to vary by session, not just by hardware, so there's no safe default; try toggling it if you hit a blank window.
-
-**`rclpy` lives in ROS2's own Python, not this app's `.venv`.** A plain `python -m venv` can't see it, so `core/ros_monitor.py`'s `MonitorDeployment` never imports `rclpy` in-process — it shells out to a small watcher script via `source <ROS setup> && python3 watcher.py`, the same "external tool" pattern used for nuXmv/Strix/Ogma, reading its stdout for violation reports.
-
-**Ogma's generated `CMakeLists.txt` doesn't build on this ROS2 release** — it calls `ament_target_dependencies()`, which has been fully removed here in favor of `target_link_libraries()` with imported targets (`Unknown CMake command "ament_target_dependencies"` otherwise). `ogma.py`'s `generate_ros2_monitor()` patches every generated package's CMakeLists.txt automatically; you don't need to do anything.
-
-**A genuine LTL semantics finding, not a bug:** the wander controller originally only re-published `/stopped` on its periodic control timer, independent of when `/human_detected` changed. That left a brief window where detection had fired but the stop hadn't been republished yet — and because the demo requirement uses `H` (historically), a single violation at any point makes the property false forever after (the past can't be undone), so the monitor reported continuous violations from that first transient onward. The fix (`wander.py`'s `_on_human_detected` now re-evaluates the control output immediately, not just on the next timer tick) isn't a hack around the monitor — it's a real latency bug the monitor correctly caught.
-
-`ROS_SETUP_BASH` (default `/opt/ros/lyrical/setup.bash`) and `LTL_DEMO_WS_SETUP_BASH` (default `~/ltl_demo_ws/install/setup.bash`) are configurable via env var if your paths differ — same convention as `NUXMV_PATH`/`STRIX_PATH`/`OGMA_PATH` above.
-
-**The demo's source lives in this repo under [`ros2_demo/`](ros2_demo/)** — `ltl_demo/` (the ROS2 package: detector, wander controller, launch file, world/robot SDF) and `ltl_monitor_gen/` (the Ogma-generated monitor package for this demo's requirement, `H (human_detected -> stopped)`, checked in as a working example). It needs to be built into a colcon workspace before "Launch Simulation" / "Start Monitoring" will find anything:
-
-```bash
-mkdir -p ~/ltl_demo_ws/src
-cp -r ros2_demo/ltl_demo ~/ltl_demo_ws/src/
-source /opt/ros/lyrical/setup.bash
-cd ~/ltl_demo_ws && colcon build --packages-select ltl_demo
-```
-
-(`ltl_monitor_gen/` doesn't need a manual build step — stage 6's `MonitorDeployment` copies and builds it into its own dedicated workspace automatically.)
-
 ## Development setup
 
 ```bash
@@ -112,7 +133,7 @@ source .venv/bin/activate  # or .venv\Scripts\activate on Windows (GUI dev only,
 pip install -e ".[dev]"
 ```
 
-Note: the GUI itself (PySide6) is cross-platform and can be developed on any OS, but the `core/ros_monitor.py` module requires a sourced ROS2 environment (rclpy) and the `core/ogma.py` / `core/realizability.py` modules shell out to Linux-native CLI tools (Ogma, nuXmv, Strix) — those pieces only run on Linux.
+Note: the GUI itself (PySide6) is cross-platform and can be developed on any OS, but `core/ogma.py`, `core/realizability.py`, and `core/equivalence_check.py` shell out to Linux-native CLI tools (Ogma, nuXmv, Strix, Spot, SPIN) — those pieces only run on Linux.
 
 ## Running
 
@@ -135,4 +156,4 @@ pip install -e ".[build]"
 pyinstaller ltlsplitter.spec
 ```
 
-Produces a single self-contained binary at `dist/ltlsplitter` — no Python interpreter or `.venv` activation needed to run it, since PyInstaller bundles the interpreter and all Python dependencies (PySide6, anthropic, etc.) inside. It does **not** bundle Ogma/nuXmv/Strix/ROS2 — those remain external CLI tools the binary shells out to at runtime, same as when running from source (see the install sections above), so they still need to be installed on whatever machine runs the binary. `ltlsplitter.spec` is checked in for a reproducible build; `dist/` and `build/` (PyInstaller's output directories) are gitignored since the binary is a large, platform-specific build artifact, not source.
+Produces a single self-contained binary at `dist/ltlsplitter` — no Python interpreter or `.venv` activation needed to run it, since PyInstaller bundles the interpreter and all Python dependencies (PySide6, anthropic, etc.) inside. It does **not** bundle Ogma/nuXmv/Strix/Spot/SPIN — those remain external CLI tools the binary shells out to at runtime, same as when running from source (see the install sections above), so they still need to be installed on whatever machine runs the binary. `ltlsplitter.spec` is checked in for a reproducible build; `dist/` and `build/` (PyInstaller's output directories) are gitignored since the binary is a large, platform-specific build artifact, not source.

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ltlsplitter.core.models import Specification, Variable, VariableType
+from ltlsplitter.core.models import Specification, Variable, VariableRole, VariableType
 
 _LOCAL_BIN = Path.home() / ".local" / "bin"
 _SUBPROCESS_TIMEOUT_SECONDS = 60
@@ -101,21 +101,32 @@ def _sanitize_id(requirement_id: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in requirement_id)
 
 
-def _build_expressions_json(spec: Specification, variables: list[Variable]) -> dict:
+def _build_expressions_json(specs: list[Specification], variables: list[Variable]) -> dict:
+    external = [v for v in variables if v.role != VariableRole.INTERNAL]
+    internal = [v for v in variables if v.role == VariableRole.INTERNAL and v.assignment]
     return {
         "Spec": {
-            "internal_variables": [],
-            "external_variables": [{"name": v.name, "type": _COPILOT_TYPES[v.type]} for v in variables],
+            "internal_variables": [
+                {"name": v.name, "meaning": v.copilot_assignment or v.assignment, "type": _COPILOT_TYPES[v.type]}
+                for v in internal
+            ],
+            "external_variables": [{"name": v.name, "type": _COPILOT_TYPES[v.type]} for v in external],
             "properties": [
                 {"id": _sanitize_id(spec.requirement_id), "formula": spec.ltl_formula, "text": ""}
+                for spec in specs
             ],
         }
     }
 
 
 def _build_variable_db(variables: list[Variable]) -> dict:
+    """Only Input/Output variables are subscribed to as ROS topics -- Internal variables are
+    derived at runtime from their `meaning` expression (see _build_expressions_json), not
+    observed directly."""
     inputs, topics = [], []
     for var in variables:
+        if var.role == VariableRole.INTERNAL:
+            continue
         topic = f"/{var.name}"
         inputs.append({
             "name": var.name,
@@ -128,9 +139,10 @@ def _build_variable_db(variables: list[Variable]) -> dict:
 
 
 def generate_ros2_monitor(
-    spec: Specification, output_dir: Path, variables: list[Variable] | None = None
+    specs: list[Specification], output_dir: Path, variables: list[Variable] | None = None
 ) -> Path:
-    """Shells out to `ogma ros` to generate a ROS2 monitor package from a spec.
+    """Shells out to `ogma ros` to generate a ROS2 monitor package from one or more specs
+    (one Ogma property per spec, in a single generated monitor).
 
     Ogma's LTL parser (ogma-cli 1.15.0) accepts a single temporal operator wrapping an
     otherwise-propositional formula (e.g. "G (x)", "H (x -> y)") but not formulas with
@@ -139,8 +151,9 @@ def generate_ros2_monitor(
     this wiring. Such formulas fail with a misleadingly worded "cannot open input
     specification file" error from ogma itself; that case is detected and clarified
     below rather than left cryptic."""
-    if not spec.ltl_formula:
-        raise ValueError("This spec has no LTL formula to generate a monitor from.")
+    specs = [s for s in specs if s.ltl_formula]
+    if not specs:
+        raise ValueError("No spec with an LTL formula to generate a monitor from.")
 
     ogma = _find_ogma()
     variables = variables or []
@@ -151,7 +164,7 @@ def generate_ros2_monitor(
         format_path = tmp_path / "format.cfg"
         variable_db_path = tmp_path / "variable-db.json"
 
-        expressions_path.write_text(json.dumps(_build_expressions_json(spec, variables), indent=2))
+        expressions_path.write_text(json.dumps(_build_expressions_json(specs, variables), indent=2))
         format_path.write_text(_FORMAT_CFG)
         variable_db_path.write_text(json.dumps(_build_variable_db(variables), indent=2))
 

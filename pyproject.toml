@@ -1,7 +1,7 @@
 [project]
 name = "ltlsplitter"
 version = "0.0.1"
-description = "GUI pipeline for splitting requirements into LTL/behavior-tree specs and deploying ROS2 runtime monitors"
+description = "GUI pipeline for LLM-assisted LTL decomposition from FRET imports, multi-model-checker validation, and Ogma ROS2 monitor export"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -30,7 +30,4 @@ packages = ["src/ltlsplitter"]
 
 [tool.pytest.ini_options]
 qt_api = "pyside6"
-# ros2_demo/ltl_demo/test/ contains ROS2's own ament lint/test boilerplate (ament_flake8,
-# ament_mypy, etc.) -- those only run inside a sourced ROS2 environment via `colcon test`,
-# not this app's own venv, and pytest would otherwise fail collecting them.
 testpaths = ["tests"]

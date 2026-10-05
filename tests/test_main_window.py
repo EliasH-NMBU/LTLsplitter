@@ -7,7 +7,7 @@ def test_main_window_has_one_page_per_pipeline_stage(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
 
-    assert window.stack.count() == len(PAGE_CLASSES) == 6
+    assert window.stack.count() == len(PAGE_CLASSES) == 4
 
 
 def test_navigation_enables_and_disables_buttons(qtbot):

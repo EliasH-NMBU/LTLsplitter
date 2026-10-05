@@ -1,26 +1,53 @@
+from ltlsplitter.core.models import FretImport, FretRequirement, SubFormula
 from ltlsplitter.core.project_state import ProjectState
 
 
-def test_requirement_ids_fallback_to_original():
-    state = ProjectState(original_requirement="the system shall do X")
-    assert state.requirement_ids() == ["R1"]
-    assert state.requirement_text("R1") == "the system shall do X"
+def _fret_import() -> FretImport:
+    return FretImport(
+        project="demo",
+        requirements=[
+            FretRequirement(reqid="r1", fulltext="...", pt_formula="(H (a -> b))", ft_formula="(G (a -> b))"),
+        ],
+    )
 
 
-def test_requirement_ids_from_sub_requirements():
-    state = ProjectState(sub_requirements=["a", "b"])
-    assert state.requirement_ids() == ["r1.1", "r1.2"]
-    assert state.requirement_text("r1.2") == "b"
+def test_active_sub_formulas_empty_when_nothing_selected():
+    assert ProjectState().active_sub_formulas() == []
 
 
-def test_no_requirement_ids_when_nothing_entered():
-    assert ProjectState().requirement_ids() == []
+def test_active_sub_formulas_falls_back_to_original_when_not_split():
+    state = ProjectState(fret_import=_fret_import(), selected_requirement_id="r1")
+
+    formulas = state.active_sub_formulas()
+
+    assert len(formulas) == 1
+    assert formulas[0] == SubFormula(id="r1", pt_formula="(H (a -> b))", ft_formula="(G (a -> b))")
 
 
-def test_spec_for_creates_once_and_reuses():
-    state = ProjectState()
-    spec = state.spec_for("R1")
-    spec.ltl_formula = "G a"
+def test_active_sub_formulas_uses_accepted_split():
+    sub_formulas = [
+        SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G a)"),
+        SubFormula(id="r1.2", pt_formula="(H b)", ft_formula="(G b)"),
+    ]
+    state = ProjectState(
+        fret_import=_fret_import(),
+        selected_requirement_id="r1",
+        split_accepted=True,
+        sub_formulas=sub_formulas,
+    )
 
-    assert state.spec_for("R1") is spec
-    assert state.spec_for("R1").ltl_formula == "G a"
+    assert state.active_sub_formulas() == sub_formulas
+
+
+def test_active_sub_formulas_ignores_stale_split_when_not_accepted():
+    state = ProjectState(
+        fret_import=_fret_import(),
+        selected_requirement_id="r1",
+        split_accepted=False,
+        sub_formulas=[SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G a)")],
+    )
+
+    formulas = state.active_sub_formulas()
+
+    assert len(formulas) == 1
+    assert formulas[0].id == "r1"

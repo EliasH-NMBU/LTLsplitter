@@ -7,7 +7,8 @@ _IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 # Common LTL/propositional-logic keywords and operator spellings that are not
 # variable references, so they shouldn't be flagged as undeclared.
 _LTL_KEYWORDS = {
-    "G", "F", "X", "U", "R", "W",
+    "G", "F", "X", "U", "R", "W", "V",
+    "H", "O", "S", "Y", "Z",  # past-time operators: historically/once/since/yesterday/zyesterday
     "true", "false", "True", "False",
     "and", "or", "not", "implies", "iff", "xor",
     "next", "until", "release", "always", "eventually", "globally", "finally",
