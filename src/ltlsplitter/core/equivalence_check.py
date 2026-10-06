@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ltlsplitter.core.models import DecompositionValidation, SubFormula, ToolCheckResult, Variable, VariableRole
+from ltlsplitter.core.models import (
+    DecompositionValidation,
+    SubFormula,
+    ToolCheckResult,
+    Variable,
+    VariableRole,
+    VariableType,
+)
 from ltlsplitter.core.realizability import ToolNotFoundError, _find_binary, _nuxmv_env, _smv_var_type
 
 _SUBPROCESS_TIMEOUT_SECONDS = 120
@@ -22,6 +29,24 @@ def _conjunction(formulas: list[str]) -> str:
 
 def _biconditional(original: str, other: str) -> str:
     return f"({original}) <-> ({other})"
+
+
+_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+
+
+def _unsupported_variables(formula: str, variables: list[Variable]) -> list[str]:
+    """Spot and SPIN's LTL grammars only accept bare boolean atomic propositions -- not
+    arithmetic/equality expressions over typed variables (confirmed against both real
+    binaries), and neither tool has an equivalent of nuXmv's DEFINE to resolve an Internal
+    variable's derived meaning. Rather than let either tool fail with a cryptic parser error
+    (Spot) or silently under-approximate a non-boolean variable as if it were boolean (which
+    could produce a wrong "tautology" verdict), this is checked upfront so the two can report
+    one clear, honest reason instead."""
+    referenced = _IDENTIFIER_RE.findall(formula)
+    return sorted({
+        v.name for v in variables
+        if v.name in referenced and (v.type != VariableType.BOOL or v.role == VariableRole.INTERNAL)
+    })
 
 
 @dataclass
@@ -99,7 +124,15 @@ def _check_tautology_nuxmv(formula: str, variables: list[Variable]) -> _Tautolog
 # parenthesis") -- it's a future-LTL/omega-automata tool, not a PLTL one. ----------------------
 
 
-def _check_tautology_spot(formula: str, variables: list[Variable]) -> _TautologyCheck:  # noqa: ARG001
+def _check_tautology_spot(formula: str, variables: list[Variable]) -> _TautologyCheck:
+    unsupported = _unsupported_variables(formula, variables)
+    if unsupported:
+        return _TautologyCheck(
+            "error",
+            "Spot only supports purely-boolean atomic propositions -- this formula references "
+            f"non-boolean or derived variable(s): {', '.join(unsupported)}.",
+        )
+
     try:
         ltlfilt = _find_binary("SPOT_LTLFILT_PATH", "ltlfilt")
     except ToolNotFoundError as exc:
@@ -142,7 +175,11 @@ def _promela_model(variables: list[Variable]) -> str:
     forever, so the never claim sees every possible truth-value sequence. All variables are
     reassigned together in one atomic{} step -- not one at a time -- so every state is a fresh,
     independent, complete valuation (matching the free Kripke structure nuXmv/Spot use here),
-    rather than only ever differing from the previous state in a single variable."""
+    rather than only ever differing from the previous state in a single variable.
+
+    Only ever declares plain booleans -- `_check_tautology_spin`'s `_unsupported_variables`
+    guard ensures any variable actually referenced in the checked formula is boolean and
+    non-Internal before this is called, so that's a safe assumption here, not an oversight."""
     free_vars = [v for v in variables if v.role != VariableRole.INTERNAL]
     decls = "\n".join(f"bool {v.name};" for v in free_vars) or "bool _unused;"
     if free_vars:
@@ -154,6 +191,19 @@ def _promela_model(variables: list[Variable]) -> str:
 
 
 def _check_tautology_spin(formula: str, variables: list[Variable]) -> _TautologyCheck:
+    unsupported = _unsupported_variables(formula, variables)
+    if unsupported:
+        return _TautologyCheck(
+            "error",
+            "SPIN's free model here only supports purely-boolean atomic propositions -- this "
+            f"formula references non-boolean or derived variable(s): {', '.join(unsupported)}. "
+            "(SPIN's own LTL parser accepts arithmetic/equality expressions like \"state = 0\" "
+            "as a literal atomic proposition -- unlike Spot and Strix -- but this project's "
+            "Promela model generator only declares boolean variables, so letting it through "
+            "would silently under-approximate the variable's real range and could produce a "
+            "wrong tautology verdict.)",
+        )
+
     try:
         spin = _find_binary("SPIN_PATH", "spin")
     except ToolNotFoundError as exc:

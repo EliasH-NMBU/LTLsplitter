@@ -89,8 +89,12 @@ class ImportSplitPage(WizardPage):
         self.accept_button.clicked.connect(self._on_accept_clicked)
         self.reject_button = QPushButton("Reject (keep original)")
         self.reject_button.clicked.connect(self._on_reject_clicked)
+        self.force_split_button = QPushButton("Force split anyway (ask LLM for 2 parts)")
+        self.force_split_button.clicked.connect(self._on_force_split_clicked)
+        self.force_split_button.setVisible(False)
         decision_row.addWidget(self.accept_button)
         decision_row.addWidget(self.reject_button)
+        decision_row.addWidget(self.force_split_button)
         right.addLayout(decision_row)
 
         right.addWidget(QLabel("Sub-formulas (double-click to edit):"))
@@ -128,6 +132,7 @@ class ImportSplitPage(WizardPage):
         self.state.split_suggestion = None
         self.state.split_accepted = False
         self.state.sub_formulas = []
+        self.force_split_button.setVisible(False)
         self.import_label.setText(f"{fret_import.project}: {len(fret_import.requirements)} requirement(s)")
         self._refresh_requirement_list()
 
@@ -136,8 +141,9 @@ class ImportSplitPage(WizardPage):
         self.requirement_list.clear()
         if self.state.fret_import:
             for req in self.state.fret_import.requirements:
-                item = QListWidgetItem(f"{req.reqid}: {req.fulltext}")
+                item = QListWidgetItem(req.reqid)
                 item.setData(Qt.ItemDataRole.UserRole, req.reqid)
+                item.setToolTip(req.fulltext)
                 self.requirement_list.addItem(item)
         self.requirement_list.blockSignals(False)
 
@@ -157,6 +163,7 @@ class ImportSplitPage(WizardPage):
         self.state.split_accepted = False
         self.state.sub_formulas = []
         self.suggestion_label.clear()
+        self.force_split_button.setVisible(False)
         self._refresh_formula_display()
 
     def _refresh_formula_display(self) -> None:
@@ -197,16 +204,16 @@ class ImportSplitPage(WizardPage):
         self.suggestion_label.setText(
             f"{verdict} (suggested {suggestion.suggested_count} part(s)): {suggestion.rationale}"
         )
+        self.force_split_button.setVisible(not suggestion.should_split)
 
-    def _on_accept_clicked(self) -> None:
+    def _decompose_and_populate(self, count: int) -> None:
         req = self._selected_requirement()
-        suggestion = self.state.split_suggestion
-        if req is None or suggestion is None:
-            QMessageBox.information(self, "No suggestion yet", "Click 'Suggest Split' first.")
+        if req is None:
+            QMessageBox.information(self, "No requirement selected", "Import a FRET file and select a requirement first.")
             return
         try:
             sub_formulas = decompose(
-                req.reqid, req.pt_formula, req.ft_formula, suggestion.suggested_count,
+                req.reqid, req.pt_formula, req.ft_formula, count,
                 api_key=self.api_key_edit.text().strip(),
             )
         except MissingAPIKeyError as exc:
@@ -218,6 +225,16 @@ class ImportSplitPage(WizardPage):
         self.state.split_accepted = True
         self.state.sub_formulas = sub_formulas
         self._refresh_sub_formula_list()
+
+    def _on_accept_clicked(self) -> None:
+        suggestion = self.state.split_suggestion
+        if suggestion is None:
+            QMessageBox.information(self, "No suggestion yet", "Click 'Suggest Split' first.")
+            return
+        self._decompose_and_populate(suggestion.suggested_count)
+
+    def _on_force_split_clicked(self) -> None:
+        self._decompose_and_populate(2)
 
     def _on_reject_clicked(self) -> None:
         self.state.split_accepted = False

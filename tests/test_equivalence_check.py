@@ -5,11 +5,48 @@ from ltlsplitter.core.equivalence_check import (
     _check_tautology_spin,
     _check_tautology_spot,
     _TautologyCheck,
+    _unsupported_variables,
     validate_decomposition,
 )
 from ltlsplitter.core.models import SubFormula, Variable, VariableRole, VariableType
 
 _XY = [Variable(name="x", type=VariableType.BOOL), Variable(name="y", type=VariableType.BOOL)]
+
+
+def test_spot_rejects_non_boolean_variable_upfront_without_needing_the_binary():
+    # No @requires_spot -- this guard runs before any subprocess call, so it's testable
+    # regardless of whether Spot happens to be installed.
+    state = [Variable(name="state", type=VariableType.INT)]
+    result = _check_tautology_spot("G (state = 0)", state)
+    assert result.status == "error"
+    assert "state" in result.details
+
+
+def test_spot_rejects_internal_variable_upfront():
+    dgt_7 = [Variable(name="dgt_7", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 7")]
+    result = _check_tautology_spot("G dgt_7", dgt_7)
+    assert result.status == "error"
+    assert "dgt_7" in result.details
+
+
+def test_spin_rejects_non_boolean_variable_upfront_without_needing_the_binary():
+    state = [Variable(name="state", type=VariableType.INT)]
+    result = _check_tautology_spin("G (state = 0)", state)
+    assert result.status == "error"
+    assert "state" in result.details
+
+
+def test_spin_rejects_internal_variable_upfront():
+    dgt_7 = [Variable(name="dgt_7", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 7")]
+    result = _check_tautology_spin("G dgt_7", dgt_7)
+    assert result.status == "error"
+    assert "dgt_7" in result.details
+
+
+def test_unsupported_variables_ignores_names_not_referenced_in_the_formula():
+    # A non-boolean variable that isn't actually mentioned in the formula shouldn't block it.
+    variables = [Variable(name="x", type=VariableType.BOOL), Variable(name="state", type=VariableType.INT)]
+    assert _unsupported_variables("G x", variables) == []
 
 
 @requires_nuxmv
