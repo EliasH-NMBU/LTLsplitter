@@ -7,7 +7,15 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ltlsplitter.core.models import ConsistencyResult, RealizabilityResult, Specification, Variable, VariableType
+from ltlsplitter.core.models import (
+    ConsistencyResult,
+    RealizabilityResult,
+    Specification,
+    Variable,
+    VariableRole,
+    VariableType,
+)
+from ltlsplitter.core.typed_atoms import TypedComparison, extract_typed_comparisons
 
 _LOCAL_BIN = Path.home() / ".local" / "bin"
 _NUXMV_LIBSHIM = Path.home() / ".local" / "share" / "ltlsplitter-tools" / "nuxmv-libshim"
@@ -179,3 +187,63 @@ def check_realizability(spec: Specification, inputs: list[str], outputs: list[st
 
     realizable = match.group(1) is None
     return RealizabilityResult(realizable=realizable, details="" if realizable else output)
+
+
+_STRIX_OP_WORDS = {"!=": "ne", "<=": "le", ">=": "ge", "=": "eq", "<": "lt", ">": "gt"}
+
+
+def _sanitize_comparison_identifier(comparison: TypedComparison) -> str:
+    """Turns a comparison like "classifier = 1" into a fresh, valid bare identifier
+    ("_classifier_eq_1") Strix can accept as an atomic proposition. Checks ops longest-first so
+    "!="/"<="/">=" aren't mistaken for containing "="/"<"/">"."""
+    for op in sorted(_STRIX_OP_WORDS, key=len, reverse=True):
+        if op in comparison.text:
+            literal = comparison.text.split(op, 1)[1].strip().replace(".", "_").replace("-", "neg")
+            return f"_{comparison.variable}_{_STRIX_OP_WORDS[op]}_{literal}"
+    return "_" + re.sub(r"\W+", "_", comparison.text.strip())
+
+
+def check_realizability_typed(formula: str, variables: list[Variable], requirement_id: str) -> RealizabilityResult:
+    """Like `check_realizability`, but first abstracts any "variable OP literal" comparisons
+    into fresh boolean propositions so Strix -- which only accepts bare-identifier atomic
+    propositions, confirmed empirically it crashes outright on a double-quoted one (unlike
+    Spot, which accepts that as a native opaque-proposition syntax) -- can check formulas built
+    from typed FRET variables. Reuses the same `extract_typed_comparisons` shared helper
+    `equivalence_check.py` uses for Spot/SPIN, just with fresh-name substitution standing in for
+    Spot's native quoting.
+
+    `Internal`-role variables are bucketed into the input side by default: every Internal
+    variable in this project's real FRET data so far is derived purely from Input variables
+    (e.g. `dgt_7 := distance_to_target > 7`), so treating it as environment-determined is
+    correct for that case -- but this is a simplification, not something derived from the
+    variable's actual defining expression, and would be wrong for an Internal variable that
+    depends on an Output."""
+    typed_names = {v.name for v in variables if v.type != VariableType.BOOL}
+    comparisons, leftover = extract_typed_comparisons(formula, typed_names)
+    if leftover:
+        return RealizabilityResult(
+            realizable=False,
+            details="Strix only supports purely-boolean atomic propositions or simple \"variable "
+            f"OP literal\" comparisons -- couldn't handle: {', '.join(leftover)}.",
+        )
+
+    role_by_name = {v.name: v.role for v in variables}
+    renamed_formula = formula
+    extra_inputs: list[str] = []
+    extra_outputs: list[str] = []
+    for comparison in comparisons:
+        fresh_name = _sanitize_comparison_identifier(comparison)
+        renamed_formula = renamed_formula.replace(comparison.text, fresh_name)
+        if role_by_name.get(comparison.variable) == VariableRole.OUTPUT:
+            extra_outputs.append(fresh_name)
+        else:
+            extra_inputs.append(fresh_name)
+
+    # Bare Internal-role identifiers (e.g. a derived boolean like "dgt_7" referenced directly,
+    # not via a comparison) also need a role bucket for Strix -- same "derived from input"
+    # default as above.
+    inputs = [v.name for v in variables if v.role in (VariableRole.INPUT, VariableRole.INTERNAL)] + extra_inputs
+    outputs = [v.name for v in variables if v.role == VariableRole.OUTPUT] + extra_outputs
+
+    spec = Specification(requirement_id=requirement_id, ltl_formula=renamed_formula)
+    return check_realizability(spec, inputs, outputs)

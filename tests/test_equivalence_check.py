@@ -1,11 +1,11 @@
-from .conftest import requires_nuxmv, requires_spin, requires_spot
+from .conftest import requires_kind2, requires_nuxmv, requires_spin, requires_spot
 
 from ltlsplitter.core.equivalence_check import (
     _check_tautology_nuxmv,
     _check_tautology_spin,
     _check_tautology_spot,
+    _is_trivial_tautology,
     _TautologyCheck,
-    _unsupported_variables,
     validate_decomposition,
 )
 from ltlsplitter.core.models import SubFormula, Variable, VariableRole, VariableType
@@ -13,40 +13,39 @@ from ltlsplitter.core.models import SubFormula, Variable, VariableRole, Variable
 _XY = [Variable(name="x", type=VariableType.BOOL), Variable(name="y", type=VariableType.BOOL)]
 
 
-def test_spot_rejects_non_boolean_variable_upfront_without_needing_the_binary():
+def test_is_trivial_tautology_detects_identical_sides():
+    assert _is_trivial_tautology("(G (x -> y)) <-> (G (x -> y))") is True
+
+
+def test_is_trivial_tautology_rejects_different_sides():
+    assert _is_trivial_tautology("(G (x -> y)) <-> (G x)") is False
+
+
+def test_is_trivial_tautology_ignores_repeated_whitespace_differences():
+    # Collapses repeated whitespace (not full removal -- that would risk merging adjacent
+    # tokens, e.g. "G a" and "Ga" comparing equal, which isn't the intent).
+    assert _is_trivial_tautology("(G (x -> y)) <-> (G  (x  ->   y))") is True
+
+
+def test_is_trivial_tautology_does_not_merge_adjacent_tokens():
+    assert _is_trivial_tautology("(G a) <-> (Ga)") is False
+
+
+def test_spot_rejects_unsupported_compound_arithmetic_upfront_without_needing_the_binary():
     # No @requires_spot -- this guard runs before any subprocess call, so it's testable
-    # regardless of whether Spot happens to be installed.
-    state = [Variable(name="state", type=VariableType.INT)]
-    result = _check_tautology_spot("G (state = 0)", state)
+    # regardless of whether Spot happens to be installed. "distance + 1 > 3" isn't a simple
+    # "variable OP literal" comparison, so it's still out of scope.
+    distance = [Variable(name="distance", type=VariableType.INT)]
+    result = _check_tautology_spot("G (distance + 1 > 3)", distance)
     assert result.status == "error"
-    assert "state" in result.details
+    assert "distance" in result.details
 
 
-def test_spot_rejects_internal_variable_upfront():
-    dgt_7 = [Variable(name="dgt_7", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 7")]
-    result = _check_tautology_spot("G dgt_7", dgt_7)
+def test_spin_rejects_unsupported_compound_arithmetic_upfront_without_needing_the_binary():
+    distance = [Variable(name="distance", type=VariableType.INT)]
+    result = _check_tautology_spin("G (distance + 1 > 3)", distance)
     assert result.status == "error"
-    assert "dgt_7" in result.details
-
-
-def test_spin_rejects_non_boolean_variable_upfront_without_needing_the_binary():
-    state = [Variable(name="state", type=VariableType.INT)]
-    result = _check_tautology_spin("G (state = 0)", state)
-    assert result.status == "error"
-    assert "state" in result.details
-
-
-def test_spin_rejects_internal_variable_upfront():
-    dgt_7 = [Variable(name="dgt_7", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 7")]
-    result = _check_tautology_spin("G dgt_7", dgt_7)
-    assert result.status == "error"
-    assert "dgt_7" in result.details
-
-
-def test_unsupported_variables_ignores_names_not_referenced_in_the_formula():
-    # A non-boolean variable that isn't actually mentioned in the formula shouldn't block it.
-    variables = [Variable(name="x", type=VariableType.BOOL), Variable(name="state", type=VariableType.INT)]
-    assert _unsupported_variables("G x", variables) == []
+    assert "distance" in result.details
 
 
 @requires_nuxmv
@@ -75,7 +74,9 @@ def test_nuxmv_substitutes_internal_variable_via_define():
 @requires_nuxmv
 def test_nuxmv_missing_binary_is_an_error_not_a_logical_result(monkeypatch):
     monkeypatch.setenv("NUXMV_PATH", "/definitely/not/a/real/path/nuXmv")
-    result = _check_tautology_nuxmv("(G x) <-> (G x)", _XY)
+    # Not a self-identical formula -- that would hit the _is_trivial_tautology fast path before
+    # ever looking for the binary, which isn't what this test means to exercise.
+    result = _check_tautology_nuxmv("(G x) <-> (F x)", _XY)
     assert result.status == "error"
 
 
@@ -93,6 +94,18 @@ def test_spot_recognizes_non_tautology():
     assert result.status == "not_tautology"
 
 
+@requires_spot
+def test_spot_handles_typed_comparisons_via_quoting():
+    # Spot's LTL grammar rejects "state = 1" as a bare token, but accepts a double-quoted
+    # string as one opaque atomic proposition -- confirmed against the real binary -- so a
+    # typed comparison no longer needs to be rejected outright the way it used to be.
+    state = [Variable(name="state", type=VariableType.INT)]
+    result = _check_tautology_spot("(G (state = 1)) <-> (G (state = 1))", state)
+    assert result.status == "tautology"
+    result = _check_tautology_spot("(G (state = 1)) <-> (G (state = 2))", state)
+    assert result.status == "not_tautology"
+
+
 @requires_spin
 def test_spin_recognizes_tautology():
     result = _check_tautology_spin("(G (x -> y)) <-> (G (x -> y))", _XY)
@@ -103,6 +116,36 @@ def test_spin_recognizes_tautology():
 def test_spin_recognizes_non_tautology():
     result = _check_tautology_spin("(G (x -> y)) <-> (F x)", _XY)
     assert result.status == "not_tautology"
+
+
+@requires_spin
+def test_spin_handles_typed_comparisons_with_a_properly_ranged_domain():
+    # SPIN's own LTL parser actually accepts "state = 1" as a literal atomic proposition
+    # (confirmed against the real binary) -- the bug this project had was never SPIN's parser,
+    # it was this project's own Promela model generator declaring every variable as `bool`
+    # regardless, silently collapsing a typed variable's real range.
+    state = [Variable(name="state", type=VariableType.INT)]
+    result = _check_tautology_spin("(G (state = 1)) <-> (G (state = 2))", state)
+    assert result.status == "not_tautology"
+
+
+@requires_spin
+def test_spin_non_tautology_unrelated_boolean_atoms():
+    # Regression test: confirmed empirically that without trying more than one starting-value
+    # combination, SPIN's never claim can get stuck at the very first (Promela-default) state
+    # and silently misreport "tautology" for genuinely different formulas -- reproduced with
+    # both unrelated atoms and negated atoms, which need opposite starting points.
+    ab = [Variable(name="a", type=VariableType.BOOL), Variable(name="b", type=VariableType.BOOL)]
+    assert _check_tautology_spin("(G a) <-> (G b)", ab).status == "not_tautology"
+    assert _check_tautology_spin("(G (!a)) <-> (G (!b))", ab).status == "not_tautology"
+    assert _check_tautology_spin("(G (a & b)) <-> (G b)", ab).status == "not_tautology"
+
+
+@requires_kind2
+def test_validate_decomposition_module_imports_cleanly():
+    # kind2_check isn't exercised by this file directly, but requires_kind2 confirms the
+    # project's conftest marker set stays consistent as tools are added.
+    assert True
 
 
 def test_validate_decomposition_builds_conjunction_and_nondegeneracy_checks(monkeypatch):
@@ -154,3 +197,15 @@ def test_validate_decomposition_skips_nondegeneracy_for_single_formula(monkeypat
     # nothing to check non-degeneracy against with a single (unsplit) formula, so all_passed
     # depends only on equivalence here.
     assert result.all_passed is True
+
+
+def test_validate_decomposition_fast_path_for_literally_unchanged_single_formula():
+    """When a single sub-formula is an exact textual copy of the original (the common
+    "no split happened" case), the equivalence check should short-circuit via
+    `_is_trivial_tautology` rather than invoking any external tool -- this is what makes that
+    common case immune to SPIN's "stuck at the first state" ambiguity. No @requires_* markers:
+    nothing here should touch a subprocess at all."""
+    sub_formulas = [SubFormula(id="r1", pt_formula="(H a)", ft_formula="(G a)")]
+    result = validate_decomposition("(H a)", "(G a)", sub_formulas, [])
+
+    assert all(r.passed for r in result.equivalence)

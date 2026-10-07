@@ -1,7 +1,13 @@
 from .conftest import requires_nuxmv, requires_strix
 
-from ltlsplitter.core.models import Specification, Variable, VariableType
-from ltlsplitter.core.realizability import ToolNotFoundError, _find_binary, check_consistency, check_realizability
+from ltlsplitter.core.models import Specification, Variable, VariableRole, VariableType
+from ltlsplitter.core.realizability import (
+    ToolNotFoundError,
+    _find_binary,
+    check_consistency,
+    check_realizability,
+    check_realizability_typed,
+)
 
 
 def test_find_binary_raises_when_not_found():
@@ -86,3 +92,37 @@ def test_check_realizability_false_when_system_must_predict_future_input():
     result = check_realizability(spec, ["request"], ["grant"])
 
     assert result.realizable is False
+
+
+def test_check_realizability_typed_rejects_unsupported_compound_arithmetic_upfront_without_needing_the_binary():
+    distance = [Variable(name="distance", type=VariableType.INT, role=VariableRole.INPUT)]
+    result = check_realizability_typed("G (distance + 1 > 3)", distance, "r1")
+    assert result.realizable is False
+    assert "distance" in result.details
+
+
+@requires_strix
+def test_check_realizability_typed_handles_typed_comparisons_via_fresh_names():
+    # Strix's LTL grammar rejects "classifier = 1" as a bare token and crashes outright on a
+    # quoted atomic proposition (unlike Spot) -- confirmed against the real binary -- so this
+    # needs fresh-name substitution, not quoting. A system that can freely set "state" to
+    # satisfy "state = 1" whenever asked should be realizable.
+    variables = [
+        Variable(name="classifier", type=VariableType.INT, role=VariableRole.INPUT),
+        Variable(name="state", type=VariableType.INT, role=VariableRole.OUTPUT),
+    ]
+    result = check_realizability_typed("G ((classifier = 1) -> (state = 1))", variables, "r1")
+    assert result.realizable is True
+
+
+@requires_strix
+def test_check_realizability_typed_buckets_internal_variables_as_inputs():
+    variables = [
+        Variable(name="distance", type=VariableType.INT, role=VariableRole.INPUT),
+        Variable(name="far", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 7"),
+        Variable(name="state", type=VariableType.BOOL, role=VariableRole.OUTPUT),
+    ]
+    # "far" is a bare Internal identifier (not a comparison) -- without bucketing it into
+    # Strix's --ins, this would fail as an unclassified atomic proposition.
+    result = check_realizability_typed("G (far -> state)", variables, "r1")
+    assert result.realizable is True

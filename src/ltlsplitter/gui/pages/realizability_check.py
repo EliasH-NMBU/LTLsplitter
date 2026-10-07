@@ -3,9 +3,9 @@ from __future__ import annotations
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton
 
 from ltlsplitter.core.kind2_check import check_realizability_kind2
-from ltlsplitter.core.models import RealizabilityResult, Specification, VariableRole
+from ltlsplitter.core.models import RealizabilityResult, VariableRole
 from ltlsplitter.core.project_state import ProjectState
-from ltlsplitter.core.realizability import ToolNotFoundError, check_realizability
+from ltlsplitter.core.realizability import ToolNotFoundError, check_realizability_typed
 from ltlsplitter.gui.pages.base import WizardPage
 
 
@@ -68,9 +68,7 @@ class RealizabilityCheckPage(WizardPage):
         ]
 
         variables = self.state.fret_import.variables
-        inputs = [v.name for v in variables if v.role == VariableRole.INPUT]
-        outputs = [v.name for v in variables if v.role == VariableRole.OUTPUT]
-        if not outputs:
+        if not any(v.role == VariableRole.OUTPUT for v in variables):
             QMessageBox.information(
                 self, "No output variables",
                 "The imported FRET file has no Output-role variables -- realizability checks "
@@ -80,12 +78,14 @@ class RealizabilityCheckPage(WizardPage):
 
         # Strix only parses future-time LTL (G/F/X/U) -- past-time H/O/S/Y (what the pt forms
         # use) isn't accepted by its grammar, confirmed empirically against the installed
-        # binary -- so Strix's check is built from the ft forms, not pt.
+        # binary -- so Strix's check is built from the ft forms, not pt. check_realizability_typed
+        # additionally abstracts any typed "variable OP literal" comparisons into fresh boolean
+        # propositions first, since Strix's grammar (like Spot's/SPIN's) only accepts bare
+        # identifiers as atomic propositions -- see its docstring for why.
         ft_formulas = [s.ft_formula for s in sub_formulas] + [r.ft_formula for r in other_requirements]
         combined = " & ".join(f"({f})" for f in ft_formulas)
-        spec = Specification(requirement_id=self.state.selected_requirement_id, ltl_formula=combined)
         try:
-            strix_result = check_realizability(spec, inputs, outputs)
+            strix_result = check_realizability_typed(combined, variables, self.state.selected_requirement_id)
         except ToolNotFoundError as exc:
             strix_result = RealizabilityResult(realizable=False, details=str(exc))
         except Exception as exc:  # noqa: BLE001 -- surface any Strix subprocess/parse failure

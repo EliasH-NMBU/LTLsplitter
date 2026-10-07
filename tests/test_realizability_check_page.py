@@ -85,15 +85,17 @@ def test_check_combines_with_other_requirements_in_the_system(qtbot, monkeypatch
 
     captured = {}
 
-    def fake_check_realizability(spec, inputs, outputs):
-        captured["ft_formula"] = spec.ltl_formula
+    def fake_check_realizability_typed(formula, variables, requirement_id):
+        captured["ft_formula"] = formula
         return RealizabilityResult(realizable=True)
 
     def fake_check_kind2(pt_formulas, variables):
         captured["pt_formulas"] = pt_formulas
         return RealizabilityResult(realizable=True)
 
-    monkeypatch.setattr("ltlsplitter.gui.pages.realizability_check.check_realizability", fake_check_realizability)
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.realizability_check.check_realizability_typed", fake_check_realizability_typed
+    )
     monkeypatch.setattr("ltlsplitter.gui.pages.realizability_check.check_realizability_kind2", fake_check_kind2)
 
     page._on_check_clicked()
