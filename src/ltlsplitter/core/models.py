@@ -71,6 +71,10 @@ class FretRequirement:
     pt_formula: str
     ft_formula: str
     variable_names: list[str] = field(default_factory=list)
+    parent_reqid: str = ""
+    """FRET's own convention for marking a requirement as a sub-part of another (seen in real
+    FRET realizability exports) -- also what this project writes when a split's sub-formulas
+    are saved back out, so the GUI can show them nested under the original they came from."""
 
 
 @dataclass

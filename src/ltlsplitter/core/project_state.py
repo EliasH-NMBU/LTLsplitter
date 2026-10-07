@@ -17,6 +17,9 @@ class ProjectState:
     validated, and exported."""
 
     fret_import: FretImport | None = None
+    fret_import_path: str = ""
+    """Where fret_import was most recently loaded from -- the base a split's sub-formulas get
+    appended to (as a new copy, never overwriting this file) when the user saves a split."""
     selected_requirement_id: str | None = None
     split_suggestion: SplitSuggestion | None = None
     split_accepted: bool = False

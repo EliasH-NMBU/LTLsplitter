@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
 )
 
-from ltlsplitter.core.fret_import import InvalidFretFileError, import_fret_file
+from ltlsplitter.core.fret_import import InvalidFretFileError, append_sub_formulas_and_save, import_fret_file
 from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose, suggest_split
 from ltlsplitter.core.models import SubFormula
 from ltlsplitter.core.project_state import ProjectState
@@ -24,6 +29,7 @@ from ltlsplitter.gui.pages.base import WizardPage
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
 _API_KEY_SETTING = "anthropic/api_key"
+_EXPORTS_DIR_NAME = "ltlsplitter_exports"
 
 
 class ImportSplitPage(WizardPage):
@@ -32,7 +38,9 @@ class ImportSplitPage(WizardPage):
         "Import a FRET project export, pick one requirement from it, and let an LLM suggest "
         "whether it should be split into independent sub-properties. Review and accept/reject "
         "the suggestion, then have the LLM perform the split -- the sub-formulas are editable "
-        "before moving on to validation."
+        "before moving on to validation. Accepting a split saves it as a new copy of the FRET "
+        "file (the original is never modified) with the sub-formulas appended as requirements "
+        "nested under the original, shown here as a dropdown."
     )
 
     def __init__(self, state: ProjectState, parent=None):
@@ -59,10 +67,11 @@ class ImportSplitPage(WizardPage):
         body = QHBoxLayout()
 
         left = QVBoxLayout()
-        left.addWidget(QLabel("Requirements in file:"))
-        self.requirement_list = QListWidget()
-        self.requirement_list.itemSelectionChanged.connect(self._on_requirement_selected)
-        left.addWidget(self.requirement_list)
+        left.addWidget(QLabel("Requirements in file (splits nested under their original):"))
+        self.requirement_tree = QTreeWidget()
+        self.requirement_tree.setHeaderHidden(True)
+        self.requirement_tree.currentItemChanged.connect(self._on_requirement_selected)
+        left.addWidget(self.requirement_tree)
         body.addLayout(left, 1)
 
         right = QVBoxLayout()
@@ -113,7 +122,7 @@ class ImportSplitPage(WizardPage):
     # -- import / selection ------------------------------------------------------------
 
     def on_show(self) -> None:
-        self._refresh_requirement_list()
+        self._refresh_requirement_tree()
 
     def _on_api_key_changed(self, text: str) -> None:
         self._settings.setValue(_API_KEY_SETTING, text)
@@ -128,37 +137,53 @@ class ImportSplitPage(WizardPage):
             QMessageBox.critical(self, "Import failed", str(exc))
             return
         self.state.fret_import = fret_import
+        self.state.fret_import_path = path
         self.state.selected_requirement_id = None
         self.state.split_suggestion = None
         self.state.split_accepted = False
         self.state.sub_formulas = []
         self.force_split_button.setVisible(False)
         self.import_label.setText(f"{fret_import.project}: {len(fret_import.requirements)} requirement(s)")
-        self._refresh_requirement_list()
+        self._refresh_requirement_tree()
 
-    def _refresh_requirement_list(self) -> None:
-        self.requirement_list.blockSignals(True)
-        self.requirement_list.clear()
+    def _refresh_requirement_tree(self) -> None:
+        self.requirement_tree.blockSignals(True)
+        self.requirement_tree.clear()
         if self.state.fret_import:
+            by_reqid = {req.reqid: req for req in self.state.fret_import.requirements}
+            items_by_reqid: dict[str, QTreeWidgetItem] = {}
+            # Two passes: create every item first, then nest -- a requirement's parent may be
+            # defined later in the file than the requirement itself.
             for req in self.state.fret_import.requirements:
-                item = QListWidgetItem(req.reqid)
-                item.setData(Qt.ItemDataRole.UserRole, req.reqid)
-                item.setToolTip(req.fulltext)
-                self.requirement_list.addItem(item)
-        self.requirement_list.blockSignals(False)
+                item = QTreeWidgetItem([req.reqid])
+                item.setData(0, Qt.ItemDataRole.UserRole, req.reqid)
+                item.setToolTip(0, req.fulltext)
+                items_by_reqid[req.reqid] = item
+            for req in self.state.fret_import.requirements:
+                item = items_by_reqid[req.reqid]
+                parent_item = items_by_reqid.get(req.parent_reqid) if req.parent_reqid in by_reqid else None
+                if parent_item is not None:
+                    parent_item.addChild(item)
+                else:
+                    self.requirement_tree.addTopLevelItem(item)
+            self.requirement_tree.expandAll()
+        self.requirement_tree.blockSignals(False)
 
         if self.state.selected_requirement_id:
-            for row in range(self.requirement_list.count()):
-                if self.requirement_list.item(row).data(Qt.ItemDataRole.UserRole) == self.state.selected_requirement_id:
-                    self.requirement_list.setCurrentRow(row)
-                    break
+            self._select_requirement_item(self.state.selected_requirement_id)
         self._refresh_formula_display()
 
-    def _on_requirement_selected(self) -> None:
-        items = self.requirement_list.selectedItems()
-        if not items:
+    def _select_requirement_item(self, reqid: str) -> None:
+        iterator = self.requirement_tree.findItems(reqid, Qt.MatchFlag.MatchRecursive, 0)
+        for item in iterator:
+            if item.data(0, Qt.ItemDataRole.UserRole) == reqid:
+                self.requirement_tree.setCurrentItem(item)
+                return
+
+    def _on_requirement_selected(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
+        if current is None:
             return
-        self.state.selected_requirement_id = items[0].data(Qt.ItemDataRole.UserRole)
+        self.state.selected_requirement_id = current.data(0, Qt.ItemDataRole.UserRole)
         self.state.split_suggestion = None
         self.state.split_accepted = False
         self.state.sub_formulas = []
@@ -225,6 +250,48 @@ class ImportSplitPage(WizardPage):
         self.state.split_accepted = True
         self.state.sub_formulas = sub_formulas
         self._refresh_sub_formula_list()
+        self._save_split(req, sub_formulas)
+
+    def _save_split(self, parent, sub_formulas: list[SubFormula]) -> None:
+        """Saves the split as a new copy of the FRET file (original untouched), with the
+        sub-formulas appended as requirements nested under `parent`, then makes that copy the
+        active file going forward so later stages (and future splits) see them as real
+        requirements -- not just in-memory for this one session."""
+        if not self.state.fret_import_path:
+            return  # nothing to copy from (shouldn't normally happen -- a split needs an import)
+
+        default_name = f"{parent.reqid}_split"
+        name, ok = QInputDialog.getText(
+            self, "Save split", "File name for the new copy (original file is never modified):", text=default_name,
+        )
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if not name.endswith(".json"):
+            name += ".json"
+
+        export_dir = Path(self.state.fret_import_path).parent / _EXPORTS_DIR_NAME
+        export_path = export_dir / name
+        declared_names = {v.name for v in self.state.fret_import.variables}
+        try:
+            append_sub_formulas_and_save(
+                self.state.fret_import_path, sub_formulas, parent, self.state.fret_import.project,
+                declared_names, export_path,
+            )
+            new_import = import_fret_file(export_path)
+        except Exception as exc:  # noqa: BLE001 -- surface any file-I/O or re-parse failure
+            QMessageBox.critical(self, "Save failed", f"Couldn't save the split: {exc}")
+            return
+
+        self.state.fret_import = new_import
+        self.state.fret_import_path = str(export_path)
+        self._refresh_requirement_tree()
+        self._select_requirement_item(parent.reqid)
+        QMessageBox.information(
+            self, "Split saved",
+            f"Saved a copy with {len(sub_formulas)} new requirement(s) to:\n{export_path}\n\n"
+            "The original FRET file was not modified. This copy is now the active file.",
+        )
 
     def _on_accept_clicked(self) -> None:
         suggestion = self.state.split_suggestion
