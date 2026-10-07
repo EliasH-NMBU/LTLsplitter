@@ -39,6 +39,9 @@ requires_spot = pytest.mark.skipif(
 requires_spin = pytest.mark.skipif(
     not _tool_available("SPIN_PATH", "spin"), reason="SPIN not installed"
 )
+requires_kind2 = pytest.mark.skipif(
+    not _tool_available("KIND2_PATH", "kind2"), reason="kind2 not installed"
+)
 
 
 def _ogma_available() -> bool:

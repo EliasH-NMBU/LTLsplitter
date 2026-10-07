@@ -22,7 +22,10 @@ class ProjectState:
     split_accepted: bool = False
     sub_formulas: list[SubFormula] = field(default_factory=list)
     validation: DecompositionValidation | None = None
-    realizability_result: RealizabilityResult | None = None
+    realizability_results: dict[str, RealizabilityResult] = field(default_factory=dict)
+    """Keyed by tool name ("Strix", "Kind2") -- each checks realizability independently via a
+    different algorithm (game synthesis vs. SMT/k-induction contract analysis), run side by
+    side as a cross-check rather than one replacing the other."""
     generated_monitor_path: str = ""
 
     def active_sub_formulas(self) -> list[SubFormula]:
