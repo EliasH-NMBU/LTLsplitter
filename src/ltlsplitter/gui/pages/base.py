@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ltlsplitter.core.project_state import ProjectState
 
@@ -13,7 +13,21 @@ class WizardPage(QWidget):
         super().__init__(parent)
         self.state = state
 
-        self.content_layout = QVBoxLayout(self)
+        # A page's content (in particular, a long tool-error message in a result QLabel, e.g.
+        # Strix or Kind2's raw output on realizability_check.py) can need more vertical space
+        # than the window has -- without a scroll area, that content is just silently clipped,
+        # with no way to read the rest of it. Every page's content goes through
+        # `self.content_layout`, inside this scroll area, so this fix covers all of them.
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        outer_layout.addWidget(scroll_area)
+
+        content_widget = QWidget()
+        self.content_layout = QVBoxLayout(content_widget)
+        scroll_area.setWidget(content_widget)
 
         title_label = QLabel(self.title)
         title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
