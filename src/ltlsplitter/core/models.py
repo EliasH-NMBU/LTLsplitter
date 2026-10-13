@@ -88,6 +88,17 @@ class FretImport:
     def requirement(self, reqid: str) -> FretRequirement | None:
         return next((r for r in self.requirements if r.reqid == reqid), None)
 
+    def leaf_requirements(self) -> list[FretRequirement]:
+        """Every requirement that isn't itself the parent of others -- i.e. the "current" form
+        of each original obligation: a split's sub-formulas once saved (see
+        `fret_import.append_sub_formulas_and_save`), or the requirement's own formula if it was
+        never split. A requirement that *has* children is excluded here since its own formula
+        is logically superseded by them (stage 2 already proved they're equivalent to it), so
+        including both would just be redundant, not wrong -- this is what "the entire system"
+        means for a realizability check: every current obligation counted exactly once."""
+        parent_ids = {r.parent_reqid for r in self.requirements if r.parent_reqid}
+        return [r for r in self.requirements if r.reqid not in parent_ids]
+
 
 @dataclass
 class SplitSuggestion:
