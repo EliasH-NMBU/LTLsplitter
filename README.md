@@ -165,11 +165,30 @@ encoding), and Kind2 gets the assumption formulas as `assume` contract items ins
 once `classifier_assumption`/`dtt_assumption` are marked as assumptions.
 
 Strix still reports `UNREALIZABLE` on that same fixture even after this fix (confirmed this isn't
-a regression -- it reported the same under the old flat-conjunction encoding too). Game synthesis
-and SMT/k-induction contract analysis aren't the same question asked two ways; they can
-legitimately disagree, and that disagreement is itself useful signal for this specific
-specification rather than something to force into agreement. Not investigated further here --
-out of scope for this fix, which only targeted the Kind2 mis-modeling bug.
+a regression -- it reported the same under the old flat-conjunction encoding too), and this one
+*was* investigated further: it traces back to the typed-comparison abstraction from "Typed/
+arithmetic FRET variables" below. That abstraction gives Strix something parseable, but it's
+lossy -- it drops real relationships the original int/enum-typed comparisons had, like mutual
+exclusivity between `classifier = 0`/`= 1`/`= 2`, or a derived variable's correlation with the
+real variable it comes from (`dgt_7`/`dgt_3`, both derived from `distance_to_target`, are
+abstracted into two *independent* fresh booleans with no link between them, even though
+`distance_to_target > 7` implies `distance_to_target > 3`). Confirmed by hand -- splicing either
+of those constraints back into the abstracted formula as extra conjuncts can flip a real
+`UNREALIZABLE` verdict to `REALIZABLE` on this exact fixture. Neither one, nor a one-at-a-time
+removal of each of the 11 guarantees, fully explains the sRobot fixture's `UNREALIZABLE` result on
+its own, so the precise combination responsible there remains unresolved -- but the general
+mechanism is real and demonstrated, not speculative.
+
+This only ever hands the *environment* side (input-bucketed propositions) combinations it
+wouldn't really have, which gives it strictly more power than the real adversary -- so a
+`REALIZABLE` verdict from Strix stays sound (a strategy that wins against a harder,
+over-approximated environment also wins against the real one), but `UNREALIZABLE` is not reliable
+whenever the formula involves typed comparisons: it may just be an artifact of this missing
+correlation, not a genuine synthesis failure. `check_realizability_typed` now appends a caveat to
+any `UNREALIZABLE` result that went through this abstraction, saying exactly that. Kind2 has no
+equivalent gap here, since it models these variables with their real int/enum types natively
+rather than abstracting them into fresh booleans -- which is why, for formulas like this, a
+Kind2 `REALIZABLE` carries more weight than a Strix `UNREALIZABLE` disagreeing with it.
 
 ## Installing Ogma (stage 4)
 

@@ -246,4 +246,26 @@ def check_realizability_typed(formula: str, variables: list[Variable], requireme
     outputs = [v.name for v in variables if v.role == VariableRole.OUTPUT] + extra_outputs
 
     spec = Specification(requirement_id=requirement_id, ltl_formula=renamed_formula)
-    return check_realizability(spec, inputs, outputs)
+    result = check_realizability(spec, inputs, outputs)
+
+    # The fresh-name substitution is purely syntactic -- it gives Strix something it can parse,
+    # but drops real relationships the original typed comparisons had (e.g. mutual exclusivity
+    # between "classifier = 0"/"= 1"/"= 2", or a derived variable's correlation with the real
+    # variable it comes from, like "dgt_7 -> dgt_3"), confirmed by hand-adding such a constraint
+    # back into a real unrealizable case and finding it can genuinely flip the verdict. That
+    # only ever hands the *environment* (input-bucketed propositions) impossible combinations it
+    # wouldn't really have -- so a REALIZABLE verdict stays sound (a strategy that wins against a
+    # strictly more-adversarial, over-approximated environment also wins against the real one),
+    # but NOT REALIZABLE is not reliable here: it may just mean "unrealizable against an
+    # abstraction artifact," not the real spec. Kind2 has no such gap, since it models these
+    # variables with their real int/enum types natively.
+    if comparisons and not result.realizable:
+        caveat = (
+            "Caveat: this formula required abstracting typed comparisons into independent fresh "
+            "boolean propositions (Strix only accepts bare-identifier atomic propositions), which "
+            "can drop real relationships between the original typed values -- this NOT REALIZABLE "
+            "verdict may be an artifact of that missing correlation rather than a genuine "
+            "synthesis failure. Kind2 models these variables natively and doesn't have this gap."
+        )
+        result = RealizabilityResult(realizable=False, details=(result.details + "\n\n" + caveat).strip())
+    return result

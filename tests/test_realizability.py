@@ -116,6 +116,32 @@ def test_check_realizability_typed_handles_typed_comparisons_via_fresh_names():
 
 
 @requires_strix
+def test_check_realizability_typed_flags_not_realizable_results_as_a_possible_abstraction_artifact():
+    # The fresh-name substitution drops real relationships between typed comparisons (e.g.
+    # mutual exclusivity between "classifier = 0"/"= 1"/"= 2") -- confirmed by hand that adding
+    # such a constraint back can flip a real NOT REALIZABLE verdict to REALIZABLE, so a NOT
+    # REALIZABLE result needs this caveat rather than being presented as a bare, final verdict.
+    classifier = [Variable(name="classifier", type=VariableType.INT, role=VariableRole.INPUT)]
+    result = check_realizability_typed("G ((classifier = 1) & (! (classifier = 1)))", classifier, "r1")
+    assert result.realizable is False
+    assert "abstracting typed comparisons" in result.details
+    assert "Kind2" in result.details
+
+
+@requires_strix
+def test_check_realizability_typed_does_not_add_the_caveat_for_purely_boolean_formulas():
+    # No typed comparisons were abstracted here -- Strix sees exactly the formula as written,
+    # so a NOT REALIZABLE verdict is not an abstraction artifact and shouldn't be captioned as one.
+    variables = [
+        Variable(name="request", type=VariableType.BOOL, role=VariableRole.INPUT),
+        Variable(name="grant", type=VariableType.BOOL, role=VariableRole.OUTPUT),
+    ]
+    result = check_realizability_typed("G (grant <-> (X request))", variables, "r1")
+    assert result.realizable is False
+    assert "abstracting typed comparisons" not in result.details
+
+
+@requires_strix
 def test_check_realizability_typed_buckets_internal_variables_as_inputs():
     variables = [
         Variable(name="distance", type=VariableType.INT, role=VariableRole.INPUT),
