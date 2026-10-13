@@ -71,6 +71,19 @@ class ImportSplitPage(WizardPage):
 
         left = QVBoxLayout()
         left.addWidget(QLabel("Requirements in file (splits nested under their original):"))
+
+        assumption_actions_row = QHBoxLayout()
+        select_all_button = QPushButton("Select All")
+        select_all_button.setToolTip("Mark every requirement as an environment assumption.")
+        select_all_button.clicked.connect(lambda: self._set_all_assumptions(True))
+        clear_all_button = QPushButton("Clear All")
+        clear_all_button.setToolTip("Mark every requirement as a system guarantee (not an assumption).")
+        clear_all_button.clicked.connect(lambda: self._set_all_assumptions(False))
+        assumption_actions_row.addWidget(select_all_button)
+        assumption_actions_row.addWidget(clear_all_button)
+        assumption_actions_row.addStretch()
+        left.addLayout(assumption_actions_row)
+
         self.requirement_tree = QTreeWidget()
         self.requirement_tree.setColumnCount(2)
         self.requirement_tree.setHeaderLabels(["Requirement", "Assumption"])
@@ -199,6 +212,15 @@ class ImportSplitPage(WizardPage):
         req = self.state.fret_import.requirement(reqid)
         if req is not None:
             req.is_assumption = item.checkState(1) == Qt.CheckState.Checked
+
+    def _set_all_assumptions(self, value: bool) -> None:
+        """Bulk-toggle every requirement's Assumption checkbox at once -- doing this one row at
+        a time via `_on_assumption_toggled` doesn't scale to a file with many requirements."""
+        if not self.state.fret_import:
+            return
+        for req in self.state.fret_import.requirements:
+            req.is_assumption = value
+        self._refresh_requirement_tree()
 
     def _on_requirement_selected(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
         if current is None:

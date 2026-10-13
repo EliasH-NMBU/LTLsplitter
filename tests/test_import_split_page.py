@@ -1,5 +1,6 @@
 import json
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from ltlsplitter.core.fret_import import import_fret_file
@@ -205,6 +206,62 @@ def test_reject_keeps_original_as_active_formula(qtbot):
 
     assert state.split_accepted is False
     assert [s.id for s in state.active_sub_formulas()] == ["r1"]
+
+
+# -- assumption checkbox ------------------------------------------------------------------
+
+
+def _state_with_two_requirements() -> ProjectState:
+    fret_import = FretImport(
+        project="demo",
+        requirements=[
+            FretRequirement(reqid="r1", fulltext="...", pt_formula="(H a)", ft_formula="(G a)"),
+            FretRequirement(reqid="r2", fulltext="...", pt_formula="(H b)", ft_formula="(G b)"),
+        ],
+        variables=[Variable(name="a", type=VariableType.BOOL), Variable(name="b", type=VariableType.BOOL)],
+    )
+    return ProjectState(fret_import=fret_import)
+
+
+def test_toggling_assumption_checkbox_updates_the_requirement(qtbot):
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    item = page.requirement_tree.topLevelItem(0)
+    item.setCheckState(1, Qt.CheckState.Checked)
+
+    assert state.fret_import.requirement("r1").is_assumption is True
+    assert state.fret_import.requirement("r2").is_assumption is False
+
+
+def test_select_all_marks_every_requirement_as_assumption(qtbot):
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    page._set_all_assumptions(True)
+
+    assert state.fret_import.requirement("r1").is_assumption is True
+    assert state.fret_import.requirement("r2").is_assumption is True
+    for i in range(page.requirement_tree.topLevelItemCount()):
+        assert page.requirement_tree.topLevelItem(i).checkState(1) == Qt.CheckState.Checked
+
+
+def test_clear_all_marks_every_requirement_as_not_assumption(qtbot):
+    state = _state_with_two_requirements()
+    for req in state.fret_import.requirements:
+        req.is_assumption = True
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    page._set_all_assumptions(False)
+
+    assert state.fret_import.requirement("r1").is_assumption is False
+    assert state.fret_import.requirement("r2").is_assumption is False
 
 
 # -- save-as-new-file flow (real temp files, QInputDialog mocked to avoid a real modal) -------
