@@ -83,33 +83,50 @@ def _ghost_var_declarations(internal_vars: list[Variable]) -> list[str]:
     ]
 
 
-def _build_lustre_contract(pt_formulas: list[str], variables: list[Variable]) -> tuple[str, int, list[str]]:
-    """Returns (lustre source, number of formulas successfully translated into guarantees,
-    formulas that didn't match the supported "(H (...))" shape and were skipped -- so the
-    caller can report that honestly instead of silently dropping them from the check)."""
+def _build_lustre_contract(
+    assumption_formulas: list[str], guarantee_formulas: list[str], variables: list[Variable]
+) -> tuple[str, int, list[str]]:
+    """Returns (lustre source, number of formulas successfully translated into assume/guarantee
+    contract items, formulas that didn't match the supported "(H (...))" shape and were skipped --
+    so the caller can report that honestly instead of silently dropping them from the check).
+
+    Assumptions (environment constraints the system benefits from but doesn't have to enforce
+    itself, e.g. "classifier is in {0,1,2}" when classifier is an input) get Kind2's `assume`
+    contract item instead of `guarantee` -- the distinction CONTRACTCK needs to tell "the system
+    can't satisfy this" apart from "the environment was never going to cooperate in the first
+    place", which flat-guaranteeing every requirement uniformly cannot."""
     inputs = [v for v in variables if v.role == VariableRole.INPUT]
     outputs = [v for v in variables if v.role == VariableRole.OUTPUT]
     internal = [v for v in variables if v.role == VariableRole.INTERNAL]
 
     history_vars: list[str] = []
-    guarantees: list[str] = []
     skipped: list[str] = []
-    for i, formula in enumerate(pt_formulas):
-        body = _strip_top_level_h(formula)
-        if body is None:
-            skipped.append(formula)
-            continue
-        ghost = f"_h{i}"
-        history_vars.append(f"  var {ghost}: bool = ({_translate_propositional(body)}) and (true -> pre {ghost});")
-        guarantees.append(ghost)
+
+    def _ghosts(formulas: list[str], prefix: str) -> list[str]:
+        names = []
+        for i, formula in enumerate(formulas):
+            body = _strip_top_level_h(formula)
+            if body is None:
+                skipped.append(formula)
+                continue
+            ghost = f"_h{prefix}{i}"
+            history_vars.append(f"  var {ghost}: bool = ({_translate_propositional(body)}) and (true -> pre {ghost});")
+            names.append(ghost)
+        return names
+
+    assumes = _ghosts(assumption_formulas, "a")
+    guarantees = _ghosts(guarantee_formulas, "g")
 
     in_params = "; ".join(f"{v.name}: {_lustre_type(v)}" for v in inputs)
     out_params = "; ".join(f"{v.name}: {_lustre_type(v)}" for v in outputs) or "_unused: bool"
     signature = f"node imported main({in_params}) returns ({out_params});"
 
-    contract_body = _ghost_var_declarations(internal) + history_vars + [f"  guarantee {g};" for g in guarantees]
+    contract_body = (
+        _ghost_var_declarations(internal) + history_vars
+        + [f"  assume {a};" for a in assumes] + [f"  guarantee {g};" for g in guarantees]
+    )
     lustre = signature + "\n(*@contract\n" + "\n".join(contract_body) + "\n*)\n"
-    return lustre, len(guarantees), skipped
+    return lustre, len(assumes) + len(guarantees), skipped
 
 
 def _context_realizability(events: list[dict], context: str) -> dict | None:
@@ -138,13 +155,19 @@ def _format_deadlock(event: dict) -> str:
     return "Deadlocking trace: " + ", ".join(values)
 
 
-def check_realizability_kind2(pt_formulas: list[str], variables: list[Variable]) -> RealizabilityResult:
+def check_realizability_kind2(
+    assumption_pt_formulas: list[str], guarantee_pt_formulas: list[str], variables: list[Variable]
+) -> RealizabilityResult:
     """Checks realizability via Kind2's contract-realizability analysis (`--enable CONTRACTCK`)
     -- an SMT/k-induction-based alternative to Strix's game-synthesis approach, and (unlike
     Strix) one that understands typed/arithmetic FRET variables natively, since Lustre has real
     int/real types. Runs alongside Strix, not instead of it -- the two use different algorithms
-    and checking both is a useful cross-check, not redundant."""
-    if not pt_formulas:
+    and checking both is a useful cross-check, not redundant.
+
+    `assumption_pt_formulas` are environment constraints (Kind2 `assume` contract items);
+    `guarantee_pt_formulas` are system obligations (`guarantee` items) -- see
+    `_build_lustre_contract` for why conflating the two produces false "unrealizable" verdicts."""
+    if not assumption_pt_formulas and not guarantee_pt_formulas:
         return RealizabilityResult(realizable=False, details="No formula to check.")
 
     try:
@@ -152,8 +175,8 @@ def check_realizability_kind2(pt_formulas: list[str], variables: list[Variable])
     except ToolNotFoundError as exc:
         return RealizabilityResult(realizable=False, details=str(exc))
 
-    lustre, guarantee_count, skipped = _build_lustre_contract(pt_formulas, variables)
-    if guarantee_count == 0:
+    lustre, translated_count, skipped = _build_lustre_contract(assumption_pt_formulas, guarantee_pt_formulas, variables)
+    if translated_count == 0:
         return RealizabilityResult(
             realizable=False,
             details="None of the formulas are in the single-top-level-H shape this Kind2 "

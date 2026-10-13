@@ -40,7 +40,10 @@ class ImportSplitPage(WizardPage):
         "the suggestion, then have the LLM perform the split -- the sub-formulas are editable "
         "before moving on to validation. Accepting a split saves it as a new copy of the FRET "
         "file (the original is never modified) with the sub-formulas appended as requirements "
-        "nested under the original, shown here as a dropdown."
+        "nested under the original, shown here as a dropdown. The Assumption checkbox marks a "
+        "requirement as an environment constraint rather than a system guarantee (seeded from "
+        "FRET's \"*_assumption\" naming convention, correct it if wrong) -- used by the "
+        "realizability check on page 3."
     )
 
     def __init__(self, state: ProjectState, parent=None):
@@ -69,8 +72,10 @@ class ImportSplitPage(WizardPage):
         left = QVBoxLayout()
         left.addWidget(QLabel("Requirements in file (splits nested under their original):"))
         self.requirement_tree = QTreeWidget()
-        self.requirement_tree.setHeaderHidden(True)
+        self.requirement_tree.setColumnCount(2)
+        self.requirement_tree.setHeaderLabels(["Requirement", "Assumption"])
         self.requirement_tree.currentItemChanged.connect(self._on_requirement_selected)
+        self.requirement_tree.itemChanged.connect(self._on_assumption_toggled)
         left.addWidget(self.requirement_tree)
         body.addLayout(left, 1)
 
@@ -158,6 +163,8 @@ class ImportSplitPage(WizardPage):
                 item = QTreeWidgetItem([req.reqid])
                 item.setData(0, Qt.ItemDataRole.UserRole, req.reqid)
                 item.setToolTip(0, req.fulltext)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(1, Qt.CheckState.Checked if req.is_assumption else Qt.CheckState.Unchecked)
                 items_by_reqid[req.reqid] = item
             for req in self.state.fret_import.requirements:
                 item = items_by_reqid[req.reqid]
@@ -179,6 +186,19 @@ class ImportSplitPage(WizardPage):
             if item.data(0, Qt.ItemDataRole.UserRole) == reqid:
                 self.requirement_tree.setCurrentItem(item)
                 return
+
+    def _on_assumption_toggled(self, item: QTreeWidgetItem, column: int) -> None:
+        """Flips `is_assumption` on the underlying requirement in memory -- affects the current
+        session's realizability checks immediately. Not written to disk right away (that would
+        either silently rewrite the active file or require a save dialog on every click); it's
+        carried forward automatically the next time a split is saved, via the
+        `current_requirements` patch-in in `append_sub_formulas_and_save`."""
+        if column != 1 or self.state.fret_import is None:
+            return
+        reqid = item.data(0, Qt.ItemDataRole.UserRole)
+        req = self.state.fret_import.requirement(reqid)
+        if req is not None:
+            req.is_assumption = item.checkState(1) == Qt.CheckState.Checked
 
     def _on_requirement_selected(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
         if current is None:
@@ -276,7 +296,7 @@ class ImportSplitPage(WizardPage):
         try:
             append_sub_formulas_and_save(
                 self.state.fret_import_path, sub_formulas, parent, self.state.fret_import.project,
-                declared_names, export_path,
+                declared_names, export_path, current_requirements=self.state.fret_import.requirements,
             )
             new_import = import_fret_file(export_path)
         except Exception as exc:  # noqa: BLE001 -- surface any file-I/O or re-parse failure

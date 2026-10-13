@@ -75,6 +75,14 @@ class FretRequirement:
     """FRET's own convention for marking a requirement as a sub-part of another (seen in real
     FRET realizability exports) -- also what this project writes when a split's sub-formulas
     are saved back out, so the GUI can show them nested under the original they came from."""
+    is_assumption: bool = False
+    """Whether this is an environment assumption (a constraint the system benefits from but
+    doesn't have to enforce itself) rather than a system guarantee. FRET's export has no
+    structural field for this -- only a naming convention (e.g. "classifier_assumption") seen in
+    real data -- so this is seeded as a heuristic default on import and left for the user to
+    correct, never trusted silently. Guaranteeing an assumption as if it were a guarantee makes
+    realizability checks fail on formulas the system never controlled in the first place (e.g.
+    "classifier is in {0,1,2}" when classifier is an input)."""
 
 
 @dataclass

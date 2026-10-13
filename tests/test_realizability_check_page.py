@@ -61,7 +61,7 @@ def test_check_requires_no_requirement_selection(qtbot, monkeypatch):
     )
     monkeypatch.setattr(
         "ltlsplitter.gui.pages.realizability_check.check_realizability_kind2",
-        lambda pt_formulas, variables: RealizabilityResult(realizable=True),
+        lambda assumption_pt_formulas, guarantee_pt_formulas, variables: RealizabilityResult(realizable=True),
     )
     state = _state_with_import()
     assert state.selected_requirement_id is None
@@ -116,8 +116,8 @@ def test_check_combines_every_leaf_requirement_exactly_once(qtbot, monkeypatch):
         captured["ft_formula"] = formula
         return RealizabilityResult(realizable=True)
 
-    def fake_check_kind2(pt_formulas, variables):
-        captured["pt_formulas"] = pt_formulas
+    def fake_check_kind2(assumption_pt_formulas, guarantee_pt_formulas, variables):
+        captured["pt_formulas"] = guarantee_pt_formulas
         return RealizabilityResult(realizable=True)
 
     monkeypatch.setattr(
@@ -132,6 +132,48 @@ def test_check_combines_every_leaf_requirement_exactly_once(qtbot, monkeypatch):
     assert "r1a" in captured["ft_formula"] and "r1b" in captured["ft_formula"]
     assert "grant -> request" in captured["ft_formula"]
     assert captured["pt_formulas"] == ["(H r1a)", "(H r1b)", "(H (grant -> request))"]
+
+
+def test_check_treats_assumption_requirements_as_assumptions_not_guarantees(qtbot, monkeypatch):
+    """A requirement marked is_assumption must become a Strix assumption (A -> G shape) and a
+    Kind2 `assume`, not get flat-ANDed in as a guarantee -- the fix for the "unrealizable"
+    verdicts that showed up when every requirement, including environment-assumption ones like
+    "classifier is in {0,1,2}", was guaranteed uniformly."""
+    requirements = [
+        FretRequirement(
+            reqid="classifier_assumption", fulltext="...", pt_formula="(H (classifier = 1))",
+            ft_formula="(G (classifier = 1))", is_assumption=True,
+        ),
+        FretRequirement(
+            reqid="r1", fulltext="...", pt_formula="(H (classifier = 1 -> grant))",
+            ft_formula="(G (classifier = 1 -> grant))",
+        ),
+    ]
+    state = _state_with_import(requirements=requirements)
+    page = RealizabilityCheckPage(state)
+    qtbot.addWidget(page)
+
+    captured = {}
+
+    def fake_check_realizability_typed(formula, variables, requirement_id):
+        captured["ft_formula"] = formula
+        return RealizabilityResult(realizable=True)
+
+    def fake_check_kind2(assumption_pt_formulas, guarantee_pt_formulas, variables):
+        captured["assumption_pt_formulas"] = assumption_pt_formulas
+        captured["guarantee_pt_formulas"] = guarantee_pt_formulas
+        return RealizabilityResult(realizable=True)
+
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.realizability_check.check_realizability_typed", fake_check_realizability_typed
+    )
+    monkeypatch.setattr("ltlsplitter.gui.pages.realizability_check.check_realizability_kind2", fake_check_kind2)
+
+    page._on_check_clicked()
+
+    assert captured["ft_formula"] == "(((G (classifier = 1)))) -> (((G (classifier = 1 -> grant))))"
+    assert captured["assumption_pt_formulas"] == ["(H (classifier = 1))"]
+    assert captured["guarantee_pt_formulas"] == ["(H (classifier = 1 -> grant))"]
 
 
 def test_on_show_displays_placeholder_before_checking(qtbot):

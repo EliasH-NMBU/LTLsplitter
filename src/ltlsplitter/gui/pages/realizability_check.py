@@ -16,8 +16,10 @@ class RealizabilityCheckPage(WizardPage):
         "every requirement in the imported FRET file, counted exactly once (a split's "
         "sub-formulas once saved stand in for the original they came from, since stage 2 "
         "already proved they're equivalent to it) -- against any adversarial sequence of input "
-        "values. Strix (game synthesis, future-time LTL) and Kind2 (SMT/k-induction contract "
-        "analysis, understands typed variables natively) run side by side as a cross-check."
+        "values. Requirements marked as assumptions (page 1's checkbox) are treated as "
+        "environment constraints (A -> G) rather than system guarantees. Strix (game synthesis, "
+        "future-time LTL) and Kind2 (SMT/k-induction contract analysis, understands typed "
+        "variables natively) run side by side as a cross-check."
     )
 
     def __init__(self, state: ProjectState, parent=None):
@@ -73,13 +75,26 @@ class RealizabilityCheckPage(WizardPage):
             )
             return
 
+        # Leaf requirements marked as environment assumptions (is_assumption) must not be
+        # guaranteed by the system -- they're constraints the environment is assumed to respect,
+        # not obligations the system controls (e.g. "classifier is in {0,1,2}" when classifier is
+        # an input). Flat-ANDing them in as guarantees makes synthesis fail on formulas the
+        # system never had a chance to satisfy on its own.
+        assumption_leaves = [r for r in leaves if r.is_assumption]
+        guarantee_leaves = [r for r in leaves if not r.is_assumption]
+
         # Strix only parses future-time LTL (G/F/X/U) -- past-time H/O/S/Y (what the pt forms
         # use) isn't accepted by its grammar, confirmed empirically against the installed
         # binary -- so Strix's check is built from the ft forms, not pt. check_realizability_typed
         # additionally abstracts any typed "variable OP literal" comparisons into fresh boolean
         # propositions first, since Strix's grammar (like Spot's/SPIN's) only accepts bare
         # identifiers as atomic propositions -- see its docstring for why.
-        combined_ft = " & ".join(f"({r.ft_formula})" for r in leaves)
+        combined_guarantees_ft = " & ".join(f"({r.ft_formula})" for r in guarantee_leaves) or "true"
+        if assumption_leaves:
+            combined_assumptions_ft = " & ".join(f"({r.ft_formula})" for r in assumption_leaves)
+            combined_ft = f"({combined_assumptions_ft}) -> ({combined_guarantees_ft})"
+        else:
+            combined_ft = combined_guarantees_ft
         try:
             strix_result = check_realizability_typed(combined_ft, variables, self.state.fret_import.project)
         except ToolNotFoundError as exc:
@@ -89,9 +104,10 @@ class RealizabilityCheckPage(WizardPage):
 
         # Kind2 has no built-in past-time operator -- its check compiles the pt (H-wrapped)
         # forms by hand into a Lustre ghost variable, so it needs pt, not ft.
-        pt_formulas = [r.pt_formula for r in leaves]
+        assumption_pt_formulas = [r.pt_formula for r in assumption_leaves]
+        guarantee_pt_formulas = [r.pt_formula for r in guarantee_leaves]
         try:
-            kind2_result = check_realizability_kind2(pt_formulas, variables)
+            kind2_result = check_realizability_kind2(assumption_pt_formulas, guarantee_pt_formulas, variables)
         except Exception as exc:  # noqa: BLE001 -- surface any kind2 subprocess/parse failure
             kind2_result = RealizabilityResult(realizable=False, details=f"Check failed: {exc}")
 

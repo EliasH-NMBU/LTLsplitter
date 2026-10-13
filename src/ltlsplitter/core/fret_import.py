@@ -28,6 +28,16 @@ class InvalidFretFileError(ValueError):
     """The selected file doesn't look like a FRET project export."""
 
 
+_ASSUMPTION_RE = re.compile(r"assumption|assume", re.IGNORECASE)
+
+
+def _is_assumption_heuristic(reqid: str, fulltext: str) -> bool:
+    """FRET's export has no structural field distinguishing environment assumptions from system
+    guarantees -- only a naming convention seen in real data (e.g. "classifier_assumption"). This
+    is a starting guess the user can correct via the GUI checkbox, not a silent final answer."""
+    return bool(_ASSUMPTION_RE.search(reqid) or _ASSUMPTION_RE.search(fulltext))
+
+
 def _pt_formula(semantics: dict) -> str:
     return semantics.get("ptExpanded") or semantics.get("pt") or ""
 
@@ -59,6 +69,10 @@ def import_fret_file(path: str | Path) -> FretImport:
     requirements = []
     for req in data["requirements"]:
         semantics = req.get("semantics", {})
+        if "is_assumption" in req:
+            is_assumption = bool(req["is_assumption"])
+        else:
+            is_assumption = _is_assumption_heuristic(req["reqid"], req.get("fulltext", ""))
         requirements.append(
             FretRequirement(
                 reqid=req["reqid"],
@@ -67,6 +81,7 @@ def import_fret_file(path: str | Path) -> FretImport:
                 ft_formula=_ft_formula(semantics),
                 variable_names=list(semantics.get("variables", [])),
                 parent_reqid=req.get("parent_reqid", ""),
+                is_assumption=is_assumption,
             )
         )
 
@@ -111,6 +126,7 @@ def _sub_formula_to_requirement_dict(sub: SubFormula, parent: FretRequirement, p
         "parent_reqid": parent.reqid,
         "project": project,
         "fulltext": f"(LLM split of {parent.reqid}) {parent.fulltext}".strip(),
+        "is_assumption": parent.is_assumption,
         "semantics": {
             "pt": sub.pt_formula,
             "ptExpanded": sub.pt_formula,
@@ -124,17 +140,27 @@ def _sub_formula_to_requirement_dict(sub: SubFormula, parent: FretRequirement, p
 
 def append_sub_formulas_and_save(
     source_path: str | Path, sub_formulas: list[SubFormula], parent: FretRequirement, project: str,
-    declared_names: set[str], output_path: str | Path,
+    declared_names: set[str], output_path: str | Path, current_requirements: list[FretRequirement] = (),
 ) -> None:
     """Reads the FRET project export at `source_path`, appends `sub_formulas` (a split's
     results) to its "requirements" array as entries parented to `parent`, and writes the result
     to `output_path` -- a new file. `source_path` is never modified, so the original FRET
-    export this project was given always stays intact."""
+    export this project was given always stays intact.
+
+    `current_requirements` is the caller's current in-memory list (post any GUI edits, such as
+    toggling `is_assumption`) -- its values are patched onto the matching existing entries before
+    writing, so a toggle made before a split isn't silently lost when the split is saved; entries
+    not present in `current_requirements` are written through unchanged."""
     source_path = Path(source_path)
     try:
         data = json.loads(source_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise InvalidFretFileError(f"Couldn't read '{source_path}' as JSON: {exc}") from exc
+
+    is_assumption_by_reqid = {r.reqid: r.is_assumption for r in current_requirements}
+    for req in data.get("requirements", []):
+        if req.get("reqid") in is_assumption_by_reqid:
+            req["is_assumption"] = is_assumption_by_reqid[req["reqid"]]
 
     new_entries = [_sub_formula_to_requirement_dict(sub, parent, project, declared_names) for sub in sub_formulas]
     data["requirements"] = list(data.get("requirements", [])) + new_entries
