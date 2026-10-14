@@ -54,6 +54,47 @@ def test_validate_runs_check_and_renders_results(qtbot, monkeypatch):
     assert "nuxmv: pass" in page.equivalence_label.text().lower()
 
 
+def test_what_is_tested_shows_placeholder_without_selection(qtbot):
+    page = DecompositionValidationPage(ProjectState())
+    qtbot.addWidget(page)
+
+    page.on_show()
+
+    assert "select a requirement" in page.what_is_tested_label.text().lower()
+
+
+def test_what_is_tested_shows_not_split_message_for_an_unsplit_requirement(qtbot):
+    page = DecompositionValidationPage(_state_with_import())
+    qtbot.addWidget(page)
+
+    page.on_show()
+
+    assert "not split" in page.what_is_tested_label.text().lower()
+
+
+def test_what_is_tested_shows_original_and_sub_formulas_and_what_each_check_compares(qtbot):
+    state = _state_with_import()
+    state.split_accepted = True
+    state.sub_formulas = [
+        SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G a)"),
+        SubFormula(id="r1.2", pt_formula="(H (a -> b))", ft_formula="(G (a -> b))"),
+    ]
+    page = DecompositionValidationPage(state)
+    qtbot.addWidget(page)
+
+    page.on_show()
+
+    text = page.what_is_tested_label.text()
+    # the original and every sub-formula's own text must be shown, not just PASS/FAIL
+    assert "(G (a -> b))" in text  # original's ft formula
+    assert "r1.1" in text and "(G a)" in text
+    assert "r1.2" in text
+    # the equivalence check must show the conjunction being compared against the original
+    assert "(G a) & (G (a -> b))" in text
+    # the non-degeneracy check must show each sub-formula compared against the original, alone
+    assert "(G a)  ≡  (G (a -> b))" in text
+
+
 def test_on_show_with_no_prior_validation_shows_placeholder(qtbot):
     page = DecompositionValidationPage(ProjectState())
     qtbot.addWidget(page)
