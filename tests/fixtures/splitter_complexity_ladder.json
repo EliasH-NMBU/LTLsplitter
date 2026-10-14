@@ -1,0 +1,456 @@
+{
+  "requirements": [
+    {
+      "reqid": "SC01_simple_implication",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold.",
+      "semantics": {
+        "pt": "(H (a -> e))",
+        "ptExpanded": "(H (a -> e))",
+        "ft": "(G (a -> e))",
+        "ftExpanded": "(G (a -> e))",
+        "ftInfAUExpanded": "(G (a -> e))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC02_biconditional",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "e shall hold if and only if a holds.",
+      "semantics": {
+        "pt": "(H (a <-> e))",
+        "ptExpanded": "(H (a <-> e))",
+        "ft": "(G (a <-> e))",
+        "ftExpanded": "(G (a <-> e))",
+        "ftInfAUExpanded": "(G (a <-> e))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC03_negation",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall not hold.",
+      "semantics": {
+        "pt": "(H (a -> (! e)))",
+        "ptExpanded": "(H (a -> (! e)))",
+        "ft": "(G (a -> (! e)))",
+        "ftExpanded": "(G (a -> (! e)))",
+        "ftInfAUExpanded": "(G (a -> (! e)))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC04_conjunctive_trigger",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a and b both hold, e shall hold.",
+      "semantics": {
+        "pt": "(H ((a & b) -> e))",
+        "ptExpanded": "(H ((a & b) -> e))",
+        "ft": "(G ((a & b) -> e))",
+        "ftExpanded": "(G ((a & b) -> e))",
+        "ftInfAUExpanded": "(G ((a & b) -> e))",
+        "variables": [
+          "a",
+          "b",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC05_disjunctive_trigger",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a or b holds, e shall hold.",
+      "semantics": {
+        "pt": "(H ((a | b) -> e))",
+        "ptExpanded": "(H ((a | b) -> e))",
+        "ft": "(G ((a | b) -> e))",
+        "ftExpanded": "(G ((a | b) -> e))",
+        "ftInfAUExpanded": "(G ((a | b) -> e))",
+        "variables": [
+          "a",
+          "b",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC06_next_step",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold at the next time step.",
+      "semantics": {
+        "pt": "(H ((Y a) -> e))",
+        "ptExpanded": "(H ((Y a) -> e))",
+        "ft": "(G (a -> (X e)))",
+        "ftExpanded": "(G (a -> (X e)))",
+        "ftInfAUExpanded": "(G (a -> (X e)))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC07_typed_comparison",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever x exceeds 10, e shall hold.",
+      "semantics": {
+        "pt": "(H ((x > 10) -> e))",
+        "ptExpanded": "(H ((x > 10) -> e))",
+        "ft": "(G ((x > 10) -> e))",
+        "ftExpanded": "(G ((x > 10) -> e))",
+        "ftInfAUExpanded": "(G ((x > 10) -> e))",
+        "variables": [
+          "e",
+          "x"
+        ]
+      }
+    },
+    {
+      "reqid": "SC08_precedence",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "b shall not hold before a has held at least once.",
+      "semantics": {
+        "pt": "(H (b -> (O a)))",
+        "ptExpanded": "(H (b -> (O a)))",
+        "ft": "(G ((! b) U a))",
+        "ftExpanded": "(G ((! b) U a))",
+        "ftInfAUExpanded": "(G ((! b) U a))",
+        "variables": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "reqid": "SC09_until_response",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, b shall hold until e becomes true.",
+      "semantics": {
+        "pt": "(H (e -> (b S a)))",
+        "ptExpanded": "(H (e -> (b S a)))",
+        "ft": "(G (a -> (b U e)))",
+        "ftExpanded": "(G (a -> (b U e)))",
+        "ftInfAUExpanded": "(G (a -> (b U e)))",
+        "variables": [
+          "a",
+          "b",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC10_two_independent_clauses",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold; and whenever b holds, f shall hold.",
+      "semantics": {
+        "pt": "(H ((a -> e) & (b -> f)))",
+        "ptExpanded": "(H ((a -> e) & (b -> f)))",
+        "ft": "(G ((a -> e) & (b -> f)))",
+        "ftExpanded": "(G ((a -> e) & (b -> f)))",
+        "ftInfAUExpanded": "(G ((a -> e) & (b -> f)))",
+        "variables": [
+          "a",
+          "b",
+          "e",
+          "f"
+        ]
+      }
+    },
+    {
+      "reqid": "SC11_mode_dispatch",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Depending on mode (0, 1, or 2), exactly one of e, f, or g shall hold.",
+      "semantics": {
+        "pt": "(H ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((mode = 2) -> g)))",
+        "ptExpanded": "(H ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((mode = 2) -> g)))",
+        "ft": "(G ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((mode = 2) -> g)))",
+        "ftExpanded": "(G ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((mode = 2) -> g)))",
+        "ftInfAUExpanded": "(G ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((mode = 2) -> g)))",
+        "variables": [
+          "e",
+          "f",
+          "g",
+          "mode"
+        ]
+      }
+    },
+    {
+      "reqid": "SC12_dispatch_with_exclusivity",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "mode shall be exactly one of 0, 1, or 2; when it is 0, e shall hold; when it is 1, f shall hold.",
+      "semantics": {
+        "pt": "(H ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))))",
+        "ptExpanded": "(H ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))))",
+        "ft": "(G ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))))",
+        "ftExpanded": "(G ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))))",
+        "ftInfAUExpanded": "(G ((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))))",
+        "variables": [
+          "e",
+          "f",
+          "mode"
+        ]
+      }
+    },
+    {
+      "reqid": "SC13_bounded_response",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold within 5 time steps.",
+      "semantics": {
+        "pt": "(H ((H (! e)) -> (O[0,4] (Z FALSE))))",
+        "ptExpanded": "(H ((H (! e)) -> (O[0,4] (Z FALSE))))",
+        "ft": "(G (a -> (F[0,5] e)))",
+        "ftExpanded": "(G (a -> (F[0,5] e)))",
+        "ftInfAUExpanded": "(G (a -> (F[0,5] e)))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC14_three_mixed_clauses",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold; whenever b holds, f shall not hold; and g shall hold if and only if c holds.",
+      "semantics": {
+        "pt": "(H (((a -> e) & (b -> (! f))) & (c <-> g)))",
+        "ptExpanded": "(H (((a -> e) & (b -> (! f))) & (c <-> g)))",
+        "ft": "(G (((a -> e) & (b -> (! f))) & (c <-> g)))",
+        "ftExpanded": "(G (((a -> e) & (b -> (! f))) & (c <-> g)))",
+        "ftInfAUExpanded": "(G (((a -> e) & (b -> (! f))) & (c <-> g)))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "e",
+          "f",
+          "g"
+        ]
+      }
+    },
+    {
+      "reqid": "SC15_deep_nesting",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever exactly one of (a without b) or (c without d) holds, exactly one of e or f shall hold.",
+      "semantics": {
+        "pt": "(H (((a & (! b)) | (c & (! d))) -> ((e & (! f)) | ((! e) & f))))",
+        "ptExpanded": "(H (((a & (! b)) | (c & (! d))) -> ((e & (! f)) | ((! e) & f))))",
+        "ft": "(G (((a & (! b)) | (c & (! d))) -> ((e & (! f)) | ((! e) & f))))",
+        "ftExpanded": "(G (((a & (! b)) | (c & (! d))) -> ((e & (! f)) | ((! e) & f))))",
+        "ftInfAUExpanded": "(G (((a & (! b)) | (c & (! d))) -> ((e & (! f)) | ((! e) & f))))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f"
+        ]
+      }
+    },
+    {
+      "reqid": "SC16_typed_arithmetic_mix",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever x exceeds 10, e shall hold; whenever x is at most 10, e shall not hold; and whenever y equals mode, f shall hold.",
+      "semantics": {
+        "pt": "(H ((((x > 10) -> e) & ((x <= 10) -> (! e))) & ((y = mode) -> f)))",
+        "ptExpanded": "(H ((((x > 10) -> e) & ((x <= 10) -> (! e))) & ((y = mode) -> f)))",
+        "ft": "(G ((((x > 10) -> e) & ((x <= 10) -> (! e))) & ((y = mode) -> f)))",
+        "ftExpanded": "(G ((((x > 10) -> e) & ((x <= 10) -> (! e))) & ((y = mode) -> f)))",
+        "ftInfAUExpanded": "(G ((((x > 10) -> e) & ((x <= 10) -> (! e))) & ((y = mode) -> f)))",
+        "variables": [
+          "e",
+          "f",
+          "mode",
+          "x",
+          "y"
+        ]
+      }
+    },
+    {
+      "reqid": "SC17_response_chain",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold within 3 steps; and e shall not hold before a has held.",
+      "semantics": {
+        "pt": "(H (((H (! e)) -> (O[0,2] (Z FALSE))) & (e -> (O a))))",
+        "ptExpanded": "(H (((H (! e)) -> (O[0,2] (Z FALSE))) & (e -> (O a))))",
+        "ft": "(G ((a -> (F[0,3] e)) & ((! e) U a)))",
+        "ftExpanded": "(G ((a -> (F[0,3] e)) & ((! e) U a)))",
+        "ftInfAUExpanded": "(G ((a -> (F[0,3] e)) & ((! e) U a)))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC18_five_independent_clauses",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold; whenever b holds, f shall not hold; g shall hold if and only if c holds; whenever d holds, h shall hold; and whenever mode is 0, e shall not hold.",
+      "semantics": {
+        "pt": "(H (((((a -> e) & (b -> (! f))) & (c <-> g)) & (d -> h)) & ((mode = 0) -> (! e))))",
+        "ptExpanded": "(H (((((a -> e) & (b -> (! f))) & (c <-> g)) & (d -> h)) & ((mode = 0) -> (! e))))",
+        "ft": "(G (((((a -> e) & (b -> (! f))) & (c <-> g)) & (d -> h)) & ((mode = 0) -> (! e))))",
+        "ftExpanded": "(G (((((a -> e) & (b -> (! f))) & (c <-> g)) & (d -> h)) & ((mode = 0) -> (! e))))",
+        "ftInfAUExpanded": "(G (((((a -> e) & (b -> (! f))) & (c <-> g)) & (d -> h)) & ((mode = 0) -> (! e))))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "mode"
+        ]
+      }
+    },
+    {
+      "reqid": "SC19_six_clauses_mixed_operators",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Six independent obligations: a step-delayed response, an until-response, a biconditional, a mode-dependent trigger, a typed-comparison trigger, and a mode/value equality -- all bundled into a single requirement, the way a poorly-scoped real-world requirement often is.",
+      "semantics": {
+        "pt": "(H (((((((Y a) -> e) & (f -> (c S b))) & (d <-> h)) & ((mode = 1) -> e)) & ((x > 0) -> f)) & ((y = mode) -> g)))",
+        "ptExpanded": "(H (((((((Y a) -> e) & (f -> (c S b))) & (d <-> h)) & ((mode = 1) -> e)) & ((x > 0) -> f)) & ((y = mode) -> g)))",
+        "ft": "(G ((((((a -> (X e)) & (b -> (c U f))) & (d <-> h)) & ((mode = 1) -> e)) & ((x > 0) -> f)) & ((y = mode) -> g)))",
+        "ftExpanded": "(G ((((((a -> (X e)) & (b -> (c U f))) & (d <-> h)) & ((mode = 1) -> e)) & ((x > 0) -> f)) & ((y = mode) -> g)))",
+        "ftInfAUExpanded": "(G ((((((a -> (X e)) & (b -> (c U f))) & (d <-> h)) & ((mode = 1) -> e)) & ((x > 0) -> f)) & ((y = mode) -> g)))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "mode",
+          "x",
+          "y"
+        ]
+      }
+    },
+    {
+      "reqid": "SC20_everything_combined",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "The hardest case: mode's three-way exclusive dispatch (with its own exclusivity invariant), a step-delayed response, a bounded response, an until-response, a typed-comparison trigger, a mode/value equality, and a biconditional -- seven independent obligations in one requirement.",
+      "semantics": {
+        "pt": "(H ((((((((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))) & ((Y a) -> e)) & ((H (! g)) -> (O[0,4] (Z FALSE)))) & (h -> (d S c))) & ((x > 10) -> (! e))) & ((y = mode) -> f)) & (d <-> h)))",
+        "ptExpanded": "(H ((((((((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))) & ((Y a) -> e)) & ((H (! g)) -> (O[0,4] (Z FALSE)))) & (h -> (d S c))) & ((x > 10) -> (! e))) & ((y = mode) -> f)) & (d <-> h)))",
+        "ft": "(G ((((((((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))) & (a -> (X e))) & (b -> (F[0,5] g))) & (c -> (d U h))) & ((x > 10) -> (! e))) & ((y = mode) -> f)) & (d <-> h)))",
+        "ftExpanded": "(G ((((((((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))) & (a -> (X e))) & (b -> (F[0,5] g))) & (c -> (d U h))) & ((x > 10) -> (! e))) & ((y = mode) -> f)) & (d <-> h)))",
+        "ftInfAUExpanded": "(G ((((((((((mode = 0) -> e) & ((mode = 1) -> f)) & ((((mode = 0) xor (mode = 1)) xor (mode = 2)))) & (a -> (X e))) & (b -> (F[0,5] g))) & (c -> (d U h))) & ((x > 10) -> (! e))) & ((y = mode) -> f)) & (d <-> h)))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "mode",
+          "x",
+          "y"
+        ]
+      }
+    }
+  ],
+  "variables": [
+    {
+      "variable_name": "a",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "b",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "c",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "d",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "mode",
+      "dataType": "integer",
+      "idType": "Input",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "x",
+      "dataType": "integer",
+      "idType": "Input",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "e",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "f",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "g",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "h",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterComplexityLadder"
+    },
+    {
+      "variable_name": "y",
+      "dataType": "integer",
+      "idType": "Output",
+      "project": "SplitterComplexityLadder"
+    }
+  ]
+}
