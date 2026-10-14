@@ -12,7 +12,12 @@ from ltlsplitter.gui.pages.base import WizardPage
 
 class MonitorExportPage(WizardPage):
     title = "4. Ogma/Copilot Export"
-    description = "Generate a ROS2 Copilot runtime-verification monitor via NASA's Ogma, one property per accepted sub-formula."
+    description = (
+        "Generate a ROS2 Copilot runtime-verification monitor via NASA's Ogma, one property per "
+        "accepted sub-formula. This produces a source package, not a running monitor -- see "
+        "README.md's \"Using the generated monitor\" section for the compile/build/run steps "
+        "(runhaskell, colcon build) and how to read violations off the generated handler topics."
+    )
 
     def __init__(self, state: ProjectState, parent=None):
         super().__init__(state, parent)
@@ -84,4 +89,8 @@ class MonitorExportPage(WizardPage):
 
         self.state.generated_monitor_path = str(package_dir)
         self.status_label.setStyleSheet("color: #1a7f37;")
-        self.status_label.setText(f"Generated monitor package at {package_dir}")
+        self.status_label.setText(
+            f"Generated monitor package at {package_dir}\n\n"
+            "Next: compile the Copilot spec (runhaskell copilot/src/Copilot.hs), then colcon "
+            "build -- see README.md's \"Using the generated monitor\" section for the full steps."
+        )

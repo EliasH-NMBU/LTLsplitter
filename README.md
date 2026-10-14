@@ -68,6 +68,58 @@ Two smaller SPIN syntax issues were found and fixed alongside this: `spin -f` ne
 
 Ogma's LTL parser (as installed, `ogma-cli` 1.15.0) accepts a single temporal operator wrapping an otherwise-propositional formula (`G (x)`, `H (x -> y)`) but not formulas with *nested* temporal operators — `G (x -> F y)`, one of the most common LTL patterns — which fails with a misleadingly worded `cannot open input specification file` error. `ogma.py` detects that specific message and appends a clarifying note rather than leaving it cryptic, but there's no code-level workaround — it's a real limitation of the tool as installed.
 
+## Using the generated monitor (stage 4)
+
+`generate_ros2_monitor` only gets you a *source package* -- it doesn't compile or run anything.
+Verified end to end against a real sRobot requirement (`classifier_empty`) on this machine, not
+just read off Ogma's docs:
+
+1. **Compile the Copilot spec into C.** The generated `<output_dir>/copilot/src/Copilot.hs` is a
+   runnable Haskell program, not a static file -- running it is what actually produces
+   `copilot.h`/`copilot.c`/`copilot_types.h` (the C99 Copilot backend), which
+   `copilot_monitor.cpp` then `#include`s directly:
+   ```sh
+   cd <output_dir>/copilot/src/
+   runhaskell Copilot.hs
+   cd -
+   ```
+   This needs the `copilot`/`copilot-c99`/`copilot-library` Haskell packages on the `runhaskell`
+   search path -- already satisfied on a machine where `cabal install ogma-cli:ogma` succeeded,
+   since `ogma-cli` itself depends on them.
+
+2. **Build the ROS2 package.** `<output_dir>` is a normal colcon workspace root (`<output_dir>/
+   copilot` is the package; `patch_cmake_for_modern_ament`, see `ogma.py`, already fixed its
+   `CMakeLists.txt` for this project's ROS2 release):
+   ```sh
+   cd <output_dir>
+   source /opt/ros/<distro>/setup.bash
+   colcon build --packages-select copilot
+   source install/setup.bash
+   ```
+
+3. **Run it alongside the real system.** `ros2 run copilot copilot` starts a node that
+   subscribes to one topic per Input/Output variable (`/<variable_name>`, typed per
+   `_ROS_MSG_TYPES` in `ogma.py` -- e.g. a FRET `int` becomes `std_msgs/msg/Int32`) and
+   re-evaluates every monitored property on *every* message received on any of them. In a real
+   deployment, these are the same topics your actual ROS2 nodes already publish to -- nothing
+   needs to be renamed or re-wired for the monitor to observe them.
+
+4. **Consume violations as a topic, not a log.** For each exported requirement, the node
+   publishes an **empty message** to `copilot/handler<SanitizedReqId>` (e.g.
+   `copilot/handlerClassifier_empty`) every time that property is violated -- the presence of a
+   message *is* the signal, there's no payload to inspect. Subscribe to it like any other topic:
+   ```sh
+   ros2 topic echo copilot/handler<SanitizedReqId>
+   ```
+   A split's sub-formulas each get their own handler topic (one per accepted `Specification` --
+   see `_build_expressions_json`), so a violation tells you exactly *which* sub-property failed,
+   not just that "something" did.
+
+Ogma also writes a `Dockerfile` (`<output_dir>/Dockerfile`, targeting `osrf/space-ros`) and a
+`test_requirements` package (a scaffold for a node that publishes sample data to exercise the
+monitor) -- useful for trying the generated monitor in isolation before wiring it into a real
+workspace, but neither is required; steps 1-4 above work directly against any ROS2 install.
+
 ## Installing nuXmv and Strix (stages 2 and 3)
 
 Neither ships as a distro package, so they're installed as standalone binaries rather than via `pip`/`apt`. `check_realizability` (`src/ltlsplitter/core/realizability.py`) and the nuXmv half of `validate_decomposition` (`src/ltlsplitter/core/equivalence_check.py`) look for them, in order: an `NUXMV_PATH`/`STRIX_PATH` env var pointing at the binary, then `PATH`, then `~/.local/bin/nuXmv` / `~/.local/bin/strix`. The convention below (symlinking into `~/.local/bin`) satisfies the last of those with no env var or PATH change needed.
