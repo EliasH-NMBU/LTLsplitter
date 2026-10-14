@@ -24,6 +24,16 @@ _ID_TYPE_MAP = {
 }
 
 
+def _normalize_type_field(value) -> str:
+    """Some real FRET exports (confirmed against the FiniteStateMachine and LiquidMixer case
+    studies shipped with FRET itself, not hypothetical) wrap a variable's dataType/idType in a
+    single-element list instead of a bare string. Using that list directly as a dict key raises
+    TypeError (list is unhashable), so this unwraps it first."""
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value or ""
+
+
 class InvalidFretFileError(ValueError):
     """The selected file doesn't look like a FRET project export."""
 
@@ -90,8 +100,8 @@ def import_fret_file(path: str | Path) -> FretImport:
         variables.append(
             Variable(
                 name=var["variable_name"],
-                type=_DATA_TYPE_MAP.get(var.get("dataType", ""), VariableType.INT),
-                role=_ID_TYPE_MAP.get(var.get("idType", ""), VariableRole.INPUT),
+                type=_DATA_TYPE_MAP.get(_normalize_type_field(var.get("dataType")), VariableType.INT),
+                role=_ID_TYPE_MAP.get(_normalize_type_field(var.get("idType")), VariableRole.INPUT),
                 assignment=var.get("assignment") or None,
                 copilot_assignment=var.get("copilotAssignment") or None,
             )

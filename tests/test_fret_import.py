@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from ltlsplitter.core.fret_import import InvalidFretFileError, append_sub_formulas_and_save, import_fret_file
+from ltlsplitter.core.fret_import import (
+    InvalidFretFileError,
+    _normalize_type_field,
+    append_sub_formulas_and_save,
+    import_fret_file,
+)
 from ltlsplitter.core.models import FretRequirement, SubFormula, VariableRole, VariableType
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "sRobotFRETfile.json"
@@ -47,6 +52,17 @@ def test_import_fret_file_rejects_unrelated_json(tmp_path):
 def test_import_fret_file_rejects_missing_file(tmp_path):
     with pytest.raises(InvalidFretFileError):
         import_fret_file(tmp_path / "does_not_exist.json")
+
+
+def test_normalize_type_field_unwraps_a_single_element_list():
+    """Confirmed against real FRET exports (the FiniteStateMachine and LiquidMixer case studies
+    shipped with FRET itself): a variable's dataType/idType can be a single-element list
+    (e.g. ["double"]) instead of a bare string. Using it directly as a dict key raised
+    TypeError (list is unhashable) before this normalization existed."""
+    assert _normalize_type_field(["double"]) == "double"
+    assert _normalize_type_field("double") == "double"
+    assert _normalize_type_field(None) == ""
+    assert _normalize_type_field([]) == ""
 
 
 def test_import_fret_file_heuristically_flags_assumption_named_requirements():
