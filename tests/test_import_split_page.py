@@ -1,6 +1,6 @@
 import json
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from ltlsplitter.core.fret_import import import_fret_file
@@ -43,6 +43,90 @@ def _write_fret_file(tmp_path, reqid="r1", fulltext="the system shall...") -> st
 
 def _select(page: ImportSplitPage, reqid: str) -> None:
     page._select_requirement_item(reqid)
+
+
+def _isolated_page(monkeypatch, tmp_path, state=None) -> ImportSplitPage:
+    """Points the page's QSettings at a throwaway ini file instead of this machine's real,
+    persisted LTLsplitter settings -- without this, the API key toggle tests below would depend
+    on whatever key (if any) a real user previously saved outside of tests. Also shows the page:
+    isVisible() only reflects setVisible() once a widget's ancestor chain has actually been
+    shown (same reason test_force_split_button_hidden_* below call page.show()), not just after
+    being registered with qtbot.addWidget."""
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.import_split.QSettings",
+        lambda *a, **kw: QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat),
+    )
+    page = ImportSplitPage(state if state is not None else ProjectState())
+    page.show()
+    return page
+
+
+# -- API key visibility toggle --------------------------------------------------------------
+
+
+def test_api_key_field_starts_visible_with_no_saved_key(qtbot, monkeypatch, tmp_path):
+    page = _isolated_page(monkeypatch, tmp_path)
+    qtbot.addWidget(page)
+
+    assert page.api_key_edit.isVisible()
+    assert not page.api_key_status_label.isVisible()
+    assert not page.api_key_change_button.isVisible()
+    assert page.api_key_status_label.text() == "No API key set"
+
+
+def test_api_key_field_collapses_once_a_key_is_entered(qtbot, monkeypatch, tmp_path):
+    page = _isolated_page(monkeypatch, tmp_path)
+    qtbot.addWidget(page)
+
+    page.api_key_edit.setText("sk-ant-test123")
+    page._on_api_key_editing_finished()
+
+    assert not page.api_key_edit.isVisible()
+    assert page.api_key_status_label.isVisible()
+    assert page.api_key_status_label.text() == "API key set"
+    assert page.api_key_change_button.isVisible()
+    assert page.api_key_change_button.text() == "Change"
+
+
+def test_empty_key_on_editing_finished_stays_in_editing_mode(qtbot, monkeypatch, tmp_path):
+    """Nothing to hide behind a "key set" button if the field was left empty."""
+    page = _isolated_page(monkeypatch, tmp_path)
+    qtbot.addWidget(page)
+
+    page.api_key_edit.setText("")
+    page._on_api_key_editing_finished()
+
+    assert page.api_key_edit.isVisible()
+    assert not page.api_key_status_label.isVisible()
+
+
+def test_change_button_reopens_the_edit_field(qtbot, monkeypatch, tmp_path):
+    page = _isolated_page(monkeypatch, tmp_path)
+    qtbot.addWidget(page)
+    page.api_key_edit.setText("sk-ant-test123")
+    page._on_api_key_editing_finished()
+    assert not page.api_key_edit.isVisible()
+
+    page._on_api_key_change_clicked()
+
+    assert page.api_key_edit.isVisible()
+    assert not page.api_key_status_label.isVisible()
+    assert page.api_key_edit.text() == "sk-ant-test123"
+
+
+def test_api_key_field_starts_collapsed_when_a_key_was_already_saved(qtbot, monkeypatch, tmp_path):
+    """A key saved in an earlier session (QSettings persists across runs) must not be shown in
+    plain/masked form on screen just because the page was freshly constructed."""
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("anthropic/api_key", "sk-ant-preexisting")
+    settings.sync()
+
+    page = _isolated_page(monkeypatch, tmp_path)
+    qtbot.addWidget(page)
+
+    assert not page.api_key_edit.isVisible()
+    assert page.api_key_status_label.isVisible()
+    assert page.api_key_status_label.text() == "API key set"
 
 
 def test_on_show_lists_imported_requirements(qtbot):

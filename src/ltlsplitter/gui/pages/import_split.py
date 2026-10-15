@@ -53,12 +53,27 @@ class ImportSplitPage(WizardPage):
 
         api_key_row = QHBoxLayout()
         api_key_row.addWidget(QLabel("Anthropic API key:"))
+
         self.api_key_edit = QLineEdit(self._settings.value(_API_KEY_SETTING, ""))
         self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_edit.setPlaceholderText("sk-ant-...")
         self.api_key_edit.textChanged.connect(self._on_api_key_changed)
+        self.api_key_edit.editingFinished.connect(self._on_api_key_editing_finished)
         api_key_row.addWidget(self.api_key_edit, 1)
+
+        self.api_key_status_label = QLabel()
+        api_key_row.addWidget(self.api_key_status_label, 1)
+
+        self.api_key_change_button = compact(QPushButton())
+        self.api_key_change_button.clicked.connect(self._on_api_key_change_clicked)
+        api_key_row.addWidget(self.api_key_change_button)
+
         self.content_layout.addLayout(api_key_row)
+
+        # Once a key is on file, it starts collapsed behind a status label + button -- not
+        # sitting visibly (even password-masked) on screen every time this page is shown.
+        self._api_key_editing = not bool(self._settings.value(_API_KEY_SETTING, "").strip())
+        self._update_api_key_visibility()
 
         import_row = QHBoxLayout()
         import_button = QPushButton("Import FRET file...")
@@ -146,6 +161,29 @@ class ImportSplitPage(WizardPage):
 
     def _on_api_key_changed(self, text: str) -> None:
         self._settings.setValue(_API_KEY_SETTING, text)
+        self._update_api_key_visibility()
+
+    def _on_api_key_editing_finished(self) -> None:
+        """Collapses the field back behind the status label once a key has actually been
+        entered (Enter pressed, or focus lost) -- an empty field stays in editing mode, since
+        there's nothing yet to hide behind a "key set" button."""
+        if self.api_key_edit.text().strip():
+            self._api_key_editing = False
+            self._update_api_key_visibility()
+
+    def _on_api_key_change_clicked(self) -> None:
+        self._api_key_editing = True
+        self._update_api_key_visibility()
+        self.api_key_edit.setFocus()
+        self.api_key_edit.selectAll()
+
+    def _update_api_key_visibility(self) -> None:
+        has_key = bool(self._settings.value(_API_KEY_SETTING, "").strip())
+        self.api_key_edit.setVisible(self._api_key_editing)
+        self.api_key_status_label.setVisible(not self._api_key_editing)
+        self.api_key_change_button.setVisible(not self._api_key_editing)
+        self.api_key_status_label.setText("API key set" if has_key else "No API key set")
+        self.api_key_change_button.setText("Change" if has_key else "Set API key")
 
     def _on_import_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Import FRET project export", "", "JSON files (*.json)")
