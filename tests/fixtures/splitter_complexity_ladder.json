@@ -176,7 +176,108 @@
       }
     },
     {
-      "reqid": "SC11_mode_dispatch",
+      "reqid": "SC11_three_independent_clauses",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold; whenever b holds, f shall hold; and whenever c holds, g shall hold.",
+      "semantics": {
+        "pt": "(H (((a -> e) & (b -> f)) & (c -> g)))",
+        "ptExpanded": "(H (((a -> e) & (b -> f)) & (c -> g)))",
+        "ft": "(G (((a -> e) & (b -> f)) & (c -> g)))",
+        "ftExpanded": "(G (((a -> e) & (b -> f)) & (c -> g)))",
+        "ftInfAUExpanded": "(G (((a -> e) & (b -> f)) & (c -> g)))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "e",
+          "f",
+          "g"
+        ]
+      }
+    },
+    {
+      "reqid": "SC12_two_way_typed_dispatch",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "When mode is 0, e shall hold; when mode is 1, f shall hold.",
+      "semantics": {
+        "pt": "(H (((mode = 0) -> e) & ((mode = 1) -> f)))",
+        "ptExpanded": "(H (((mode = 0) -> e) & ((mode = 1) -> f)))",
+        "ft": "(G (((mode = 0) -> e) & ((mode = 1) -> f)))",
+        "ftExpanded": "(G (((mode = 0) -> e) & ((mode = 1) -> f)))",
+        "ftInfAUExpanded": "(G (((mode = 0) -> e) & ((mode = 1) -> f)))",
+        "variables": [
+          "e",
+          "f",
+          "mode"
+        ]
+      }
+    },
+    {
+      "reqid": "SC13_typed_and_until_mix",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever x exceeds 5, e shall hold; and whenever a holds, b shall hold until f becomes true.",
+      "semantics": {
+        "pt": "(H (((x > 5) -> e) & (f -> (b S a))))",
+        "ptExpanded": "(H (((x > 5) -> e) & (f -> (b S a))))",
+        "ft": "(G (((x > 5) -> e) & (a -> (b U f))))",
+        "ftExpanded": "(G (((x > 5) -> e) & (a -> (b U f))))",
+        "ftInfAUExpanded": "(G (((x > 5) -> e) & (a -> (b U f))))",
+        "variables": [
+          "a",
+          "b",
+          "e",
+          "f",
+          "x"
+        ]
+      }
+    },
+    {
+      "reqid": "SC14_next_and_precedence_mix",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold at the next step; and b shall not hold before c has held.",
+      "semantics": {
+        "pt": "(H (((Y a) -> e) & (b -> (O c))))",
+        "ptExpanded": "(H (((Y a) -> e) & (b -> (O c))))",
+        "ft": "(G ((a -> (X e)) & ((! b) U c)))",
+        "ftExpanded": "(G ((a -> (X e)) & ((! b) U c)))",
+        "ftInfAUExpanded": "(G ((a -> (X e)) & ((! b) U c)))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "e"
+        ]
+      }
+    },
+    {
+      "reqid": "SC15_four_mixed_clauses",
+      "parent_reqid": "",
+      "project": "SplitterComplexityLadder",
+      "fulltext": "Whenever a holds, e shall hold; whenever b holds, f shall not hold; g shall hold if and only if c holds; and whenever x is positive, h shall hold.",
+      "semantics": {
+        "pt": "(H ((((a -> e) & (b -> (! f))) & (c <-> g)) & ((x > 0) -> h)))",
+        "ptExpanded": "(H ((((a -> e) & (b -> (! f))) & (c <-> g)) & ((x > 0) -> h)))",
+        "ft": "(G ((((a -> e) & (b -> (! f))) & (c <-> g)) & ((x > 0) -> h)))",
+        "ftExpanded": "(G ((((a -> e) & (b -> (! f))) & (c <-> g)) & ((x > 0) -> h)))",
+        "ftInfAUExpanded": "(G ((((a -> e) & (b -> (! f))) & (c <-> g)) & ((x > 0) -> h)))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "e",
+          "f",
+          "g",
+          "h",
+          "x"
+        ]
+      }
+    },
+    {
+      "reqid": "SC16_mode_dispatch",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Depending on mode (0, 1, or 2), exactly one of e, f, or g shall hold.",
@@ -195,7 +296,7 @@
       }
     },
     {
-      "reqid": "SC12_dispatch_with_exclusivity",
+      "reqid": "SC17_dispatch_with_exclusivity",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "mode shall be exactly one of 0, 1, or 2; when it is 0, e shall hold; when it is 1, f shall hold.",
@@ -213,7 +314,7 @@
       }
     },
     {
-      "reqid": "SC13_bounded_response",
+      "reqid": "SC18_bounded_response",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Whenever a holds, e shall hold within 5 time steps.",
@@ -230,7 +331,7 @@
       }
     },
     {
-      "reqid": "SC14_three_mixed_clauses",
+      "reqid": "SC19_three_mixed_clauses",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Whenever a holds, e shall hold; whenever b holds, f shall not hold; and g shall hold if and only if c holds.",
@@ -251,7 +352,7 @@
       }
     },
     {
-      "reqid": "SC15_deep_nesting",
+      "reqid": "SC20_deep_nesting",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Whenever exactly one of (a without b) or (c without d) holds, exactly one of e or f shall hold.",
@@ -272,7 +373,7 @@
       }
     },
     {
-      "reqid": "SC16_typed_arithmetic_mix",
+      "reqid": "SC21_typed_arithmetic_mix",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Whenever x exceeds 10, e shall hold; whenever x is at most 10, e shall not hold; and whenever y equals mode, f shall hold.",
@@ -292,7 +393,7 @@
       }
     },
     {
-      "reqid": "SC17_response_chain",
+      "reqid": "SC22_response_chain",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Whenever a holds, e shall hold within 3 steps; and e shall not hold before a has held.",
@@ -309,7 +410,7 @@
       }
     },
     {
-      "reqid": "SC18_five_independent_clauses",
+      "reqid": "SC23_five_independent_clauses",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Whenever a holds, e shall hold; whenever b holds, f shall not hold; g shall hold if and only if c holds; whenever d holds, h shall hold; and whenever mode is 0, e shall not hold.",
@@ -333,7 +434,7 @@
       }
     },
     {
-      "reqid": "SC19_six_clauses_mixed_operators",
+      "reqid": "SC24_six_clauses_mixed_operators",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "Six independent obligations: a step-delayed response, an until-response, a biconditional, a mode-dependent trigger, a typed-comparison trigger, and a mode/value equality -- all bundled into a single requirement, the way a poorly-scoped real-world requirement often is.",
@@ -359,7 +460,7 @@
       }
     },
     {
-      "reqid": "SC20_everything_combined",
+      "reqid": "SC25_everything_combined",
       "parent_reqid": "",
       "project": "SplitterComplexityLadder",
       "fulltext": "The hardest case: mode's three-way exclusive dispatch (with its own exclusivity invariant), a step-delayed response, a bounded response, an until-response, a typed-comparison trigger, a mode/value equality, and a biconditional -- seven independent obligations in one requirement.",

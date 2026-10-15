@@ -9,7 +9,9 @@ _IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _LTL_KEYWORDS = {
     "G", "F", "X", "U", "R", "W", "V",
     "H", "O", "S", "Y", "Z",  # past-time operators: historically/once/since/yesterday/zyesterday
-    "true", "false", "True", "False",
+    "true", "false", "True", "False", "TRUE", "FALSE",  # FRET itself spells bounded-operator
+    # literals all-caps, e.g. "(O[0,4] (Z FALSE))" -- confirmed in the real LiftPlusCruise
+    # fixture (LPC_full_reqts_and_vars.json), not just this project's own synthetic formulas.
     "and", "or", "not", "implies", "iff", "xor",
     "next", "until", "release", "always", "eventually", "globally", "finally",
 }
