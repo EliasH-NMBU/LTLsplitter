@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ltlsplitter.core.project_state import ProjectState
+from ltlsplitter.gui.theme import ACCENT, BORDER, TEXT_MUTED
 
 
 class WizardPage(QWidget):
@@ -27,15 +28,26 @@ class WizardPage(QWidget):
 
         content_widget = QWidget()
         self.content_layout = QVBoxLayout(content_widget)
+        self.content_layout.setContentsMargins(20, 18, 20, 18)
+        self.content_layout.setSpacing(10)
         scroll_area.setWidget(content_widget)
 
         title_label = QLabel(self.title)
-        title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title_label.setStyleSheet(f"font-size: 19px; font-weight: 700; color: {ACCENT};")
         self.content_layout.addWidget(title_label)
 
         description_label = QLabel(self.description)
         description_label.setWordWrap(True)
+        description_label.setStyleSheet(f"color: {TEXT_MUTED};")
         self.content_layout.addWidget(description_label)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Plain)
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background-color: {BORDER}; border: none;")
+        self.content_layout.addWidget(divider)
+        self.content_layout.addSpacing(4)
 
     def on_show(self) -> None:
         """Called by MainWindow whenever this page becomes the current page,

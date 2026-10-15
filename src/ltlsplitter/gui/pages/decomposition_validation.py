@@ -8,6 +8,7 @@ from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose
 from ltlsplitter.core.models import FretRequirement, ToolCheckResult
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
+from ltlsplitter.gui.theme import compact
 
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
@@ -26,7 +27,7 @@ class DecompositionValidationPage(WizardPage):
         super().__init__(state, parent)
         self._settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
 
-        validate_button = QPushButton("Validate Decomposition")
+        validate_button = compact(QPushButton("Validate Decomposition"))
         validate_button.clicked.connect(self._on_validate_clicked)
         self.content_layout.addWidget(validate_button)
 
@@ -47,7 +48,7 @@ class DecompositionValidationPage(WizardPage):
         self.content_layout.addWidget(self.nondegeneracy_label)
 
         retry_row = QVBoxLayout()
-        self.retry_button = QPushButton("Retry split with LLM (using this failure as feedback)")
+        self.retry_button = compact(QPushButton("Retry split with LLM (using this failure as feedback)"))
         self.retry_button.clicked.connect(self._on_retry_clicked)
         retry_row.addWidget(self.retry_button)
         self.content_layout.addLayout(retry_row)

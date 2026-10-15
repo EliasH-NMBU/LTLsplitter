@@ -25,6 +25,7 @@ from ltlsplitter.core.models import SubFormula
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.reference_check import find_undeclared_references
 from ltlsplitter.gui.pages.base import WizardPage
+from ltlsplitter.gui.theme import compact
 
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
@@ -103,7 +104,7 @@ class ImportSplitPage(WizardPage):
         self.variables_label.setWordWrap(True)
         right.addWidget(self.variables_label)
 
-        suggest_button = QPushButton("Suggest Split (LLM)")
+        suggest_button = compact(QPushButton("Suggest Split (LLM)"))
         suggest_button.clicked.connect(self._on_suggest_clicked)
         right.addWidget(suggest_button)
 
@@ -112,16 +113,17 @@ class ImportSplitPage(WizardPage):
         right.addWidget(self.suggestion_label)
 
         decision_row = QHBoxLayout()
-        self.accept_button = QPushButton("Accept split")
+        self.accept_button = compact(QPushButton("Accept split"))
         self.accept_button.clicked.connect(self._on_accept_clicked)
-        self.reject_button = QPushButton("Reject (keep original)")
+        self.reject_button = compact(QPushButton("Reject (keep original)"))
         self.reject_button.clicked.connect(self._on_reject_clicked)
-        self.force_split_button = QPushButton("Force split anyway (ask LLM for 2 parts)")
+        self.force_split_button = compact(QPushButton("Force split anyway (ask LLM for 2 parts)"))
         self.force_split_button.clicked.connect(self._on_force_split_clicked)
         self.force_split_button.setVisible(False)
         decision_row.addWidget(self.accept_button)
         decision_row.addWidget(self.reject_button)
         decision_row.addWidget(self.force_split_button)
+        decision_row.addStretch()
         right.addLayout(decision_row)
 
         right.addWidget(QLabel("Sub-formulas (double-click to edit):"))

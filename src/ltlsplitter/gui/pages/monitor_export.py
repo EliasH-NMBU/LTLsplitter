@@ -8,6 +8,7 @@ from ltlsplitter.core.models import Specification
 from ltlsplitter.core.ogma import ToolNotFoundError, generate_ros2_monitor
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
+from ltlsplitter.gui.theme import compact
 
 
 class MonitorExportPage(WizardPage):
@@ -37,7 +38,7 @@ class MonitorExportPage(WizardPage):
         dir_row.addWidget(browse_button)
         self.content_layout.addLayout(dir_row)
 
-        generate_button = QPushButton("Generate Monitor")
+        generate_button = compact(QPushButton("Generate Monitor"))
         generate_button.clicked.connect(self._on_generate_clicked)
         self.content_layout.addWidget(generate_button)
 

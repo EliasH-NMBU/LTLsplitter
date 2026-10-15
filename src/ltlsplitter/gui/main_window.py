@@ -31,16 +31,24 @@ class MainWindow(QMainWindow):
 
         self.back_button = QPushButton("Back")
         self.next_button = QPushButton("Next")
+        self.next_button.setObjectName("primaryButton")  # the one button on every page that
+        # always matters -- see theme.py's QPushButton#primaryButton rule -- gets the filled
+        # accent treatment, everything else stays outlined.
+        for button in (self.back_button, self.next_button):
+            button.setMinimumWidth(96)
         self.back_button.clicked.connect(self.go_back)
         self.next_button.clicked.connect(self.go_next)
 
         nav_layout = QHBoxLayout()
+        nav_layout.setContentsMargins(20, 10, 20, 14)
         nav_layout.addWidget(self.back_button)
         nav_layout.addStretch()
         nav_layout.addWidget(self.next_button)
 
         central = QWidget()
         central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
         central_layout.addWidget(self.stack)
         central_layout.addLayout(nav_layout)
         self.setCentralWidget(central)

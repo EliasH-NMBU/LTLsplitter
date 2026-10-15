@@ -7,6 +7,7 @@ from ltlsplitter.core.models import RealizabilityResult, VariableRole
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.realizability import ToolNotFoundError, check_realizability_typed
 from ltlsplitter.gui.pages.base import WizardPage
+from ltlsplitter.gui.theme import compact
 
 
 class RealizabilityCheckPage(WizardPage):
@@ -25,7 +26,7 @@ class RealizabilityCheckPage(WizardPage):
     def __init__(self, state: ProjectState, parent=None):
         super().__init__(state, parent)
 
-        check_button = QPushButton("Check Realizability (entire system)")
+        check_button = compact(QPushButton("Check Realizability (entire system)"))
         check_button.clicked.connect(self._on_check_clicked)
         self.content_layout.addWidget(check_button)
 
