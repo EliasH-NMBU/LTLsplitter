@@ -22,10 +22,10 @@ class MonitorExportPage(WizardPage):
     def __init__(self, state: ProjectState, parent=None):
         super().__init__(state, parent)
 
-        self.content_layout.addWidget(QLabel("Formula(s) to export:"))
-        self.formulas_label = QLabel()
-        self.formulas_label.setWordWrap(True)
-        self.content_layout.addWidget(self.formulas_label)
+        self.content_layout.addWidget(QLabel("Source file:"))
+        self.source_file_label = QLabel()
+        self.source_file_label.setWordWrap(True)
+        self.content_layout.addWidget(self.source_file_label)
 
         self.content_layout.addWidget(QLabel("Output directory:"))
         dir_row = QHBoxLayout()
@@ -50,14 +50,26 @@ class MonitorExportPage(WizardPage):
         self._output_dir: Path | None = None
 
     def on_show(self) -> None:
-        sub_formulas = self.state.active_sub_formulas()
-        if sub_formulas:
-            self.formulas_label.setText("\n".join(f"{s.id}: {s.pt_formula}" for s in sub_formulas))
-        else:
-            self.formulas_label.setText("(select a requirement on page 1 first)")
+        self._render_source_file()
         if self.state.generated_monitor_path:
             self.status_label.setStyleSheet("color: #1a7f37;")
             self.status_label.setText(f"Last generated monitor: {self.state.generated_monitor_path}")
+
+    def _render_source_file(self) -> None:
+        """Shows the active FRET file -- `state.fret_import_path`, the same field `_save_split`
+        (import_split.py) repoints at a split's saved copy, so this always reflects whichever
+        file page 1's choices actually produced, not just the originally-imported one."""
+        if not self.state.fret_import_path:
+            self.source_file_label.setText("(no file imported -- import a FRET file on page 1 first)")
+            return
+
+        lines = [self.state.fret_import_path]
+        sub_formulas = self.state.active_sub_formulas()
+        if sub_formulas:
+            lines.append("Exporting: " + ", ".join(s.id for s in sub_formulas))
+        else:
+            lines.append("(select a requirement on page 1 first)")
+        self.source_file_label.setText("\n".join(lines))
 
     def _on_browse_clicked(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Select output directory")
