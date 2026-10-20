@@ -90,12 +90,14 @@ Two smaller SPIN syntax issues were found and fixed alongside this: `spin -f` ne
 
 ## Ogma's known limitation (stage 4)
 
-Ogma (as installed, `ogma-cli` 1.16.0) still can't actually turn a formula with a *nested* temporal operator — `G (x -> F y)`, one of the most common LTL patterns — into a working monitor, but the failure mode changed with the 1.15.0 → 1.16.0 upgrade, and is worse, not better:
+Ogma (as installed, `ogma-cli` 1.16.0) still can't actually turn a **future-time** formula with a *nested* temporal operator — `G (x -> F y)`, one of the most common LTL patterns — into a working monitor, but the failure mode changed with the 1.15.0 → 1.16.0 upgrade, and is worse, not better:
 
 - **Before (1.15.0):** `ogma ros` itself rejected the formula immediately, with a (misleadingly worded) `cannot open input specification file` error. `generate_ros2_monitor` caught that specific message and raised a clear, actionable error right there in the GUI.
 - **Now (1.16.0):** `ogma ros` accepts the formula and reports success -- `generate_ros2_monitor` returns normally, and the GUI shows "Generated monitor package" -- but the `Copilot.hs` it wrote is ill-typed Haskell (confirmed by hand: both an unbounded `G (x -> F y)` and a bounded `G (x -> F[0,5] y)` produce an `always`/`eventually` call missing required arguments) and fails at the `runhaskell Copilot.hs` compile step from "Using the generated monitor" below, with a GHC type error that gives no hint the root cause is a nested operator. The failure moved later in the workflow and got harder to diagnose, not fixed.
 
-`ogma.py`'s `cannot open input specification file` detection is harmless but no longer fires for this case under 1.16.0 -- there's currently no code-level workaround catching it earlier; avoid nesting temporal operators in sub-formulas headed for stage 4 until Ogma actually supports it.
+**This turns out not to matter in practice, because stage 4 only ever sends the *past-time* (`pt`) form to Ogma** (`monitor_export.py` builds every `Specification` from `req.pt_formula`, never `ft_formula`) -- and nested *past-time* operators genuinely work. Confirmed by hand, not assumed: `(H (x -> (O y)))`, `(H (y S x))`, `(H (x -> (Y y)))`, a doubly-nested `(H ((O x) -> (O y)))`, and the real nested pattern from a genuine FRET export (`LPC_REACH_HOVER_13` in `LPC_full_reqts_and_vars.json`: `(H ((H (! x)) -> (O[0,12] (Z FALSE))))`) all pass through `ogma ros`, compile cleanly via `runhaskell Copilot.hs`, and build successfully with `colcon build`. Copilot's `PTLTL` library (`alwaysBeen`/`eventuallyPrev`/`since`/`previous`) handles nesting correctly where its future-time `MTL` library (`always`/`eventually`) does not.
+
+`ogma.py`'s `cannot open input specification file` detection is harmless but no longer fires for the future-time case under 1.16.0 -- there's currently no code-level workaround catching it earlier. This only matters if something outside this pipeline's normal flow feeds Ogma a future-time formula directly; the GUI itself never does.
 
 ## Using the generated monitor (stage 4)
 
