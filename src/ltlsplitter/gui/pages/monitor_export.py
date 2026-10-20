@@ -38,14 +38,16 @@ def _sanitize_dirname(name: str) -> str:
 class MonitorExportPage(WizardPage):
     title = "4. Ogma/Copilot Export"
     description = (
-        "Organize the current system's requirements into monitoring groups -- each one becomes "
-        "its own separate ROS2 Copilot monitor package, so a large system doesn't have to ship "
-        "as a single monolithic monitor. \"Auto-suggest Groups\" clusters requirements that "
-        "share a variable (they'd subscribe to the same topic anyway); drag requirements between "
-        "groups, rename or add/remove groups by hand afterward. This produces a source package, "
-        "not a running monitor -- see README.md's \"Using the generated monitor\" section for "
-        "the compile/build/run steps (runhaskell, colcon build) and how to read violations off "
-        "the generated handler topics."
+        "Ogma/Copilot only understands past-time LTL (H/O/S/Y) -- every property exported here "
+        "is built from each requirement's pt form, never its ft form; there's no future-time "
+        "support to fall back on. Organize the current system's requirements into monitoring "
+        "groups -- each one becomes its own separate ROS2 Copilot monitor package, so a large "
+        "system doesn't have to ship as a single monolithic monitor. \"Auto-suggest Groups\" "
+        "clusters requirements that share a variable (they'd subscribe to the same topic "
+        "anyway); drag requirements between groups, rename or add/remove groups by hand "
+        "afterward. This produces a source package, not a running monitor -- see README.md's "
+        "\"Using the generated monitor\" section for the compile/build/run steps (runhaskell, "
+        "colcon build) and how to read violations off the generated handler topics."
     )
 
     def __init__(self, state: ProjectState, parent=None):
