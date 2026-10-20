@@ -109,6 +109,15 @@ class FretImport:
 
 
 @dataclass
+class MonitorGroup:
+    """One deployable Ogma/Copilot monitor package's worth of requirements -- stage 4 exports
+    one group at a time, not the whole project in a single package."""
+
+    name: str
+    requirement_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SplitSuggestion:
     should_split: bool
     rationale: str
