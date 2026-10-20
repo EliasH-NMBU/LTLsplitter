@@ -4,6 +4,30 @@ A GUI pipeline that imports a [NASA FRET](https://github.com/NASA-SW-VnV/fret) p
 
 **Platform: Linux only.** See [docs/pipeline-design-research.md](docs/pipeline-design-research.md) for why (Ogma, Strix, Spot, SPIN, and Kind2 are Linux-native only).
 
+## Walkthrough
+
+Screenshots of a real run against [`tests/fixtures/sRobotFRETfile.json`](tests/fixtures/sRobotFRETfile.json) -- every tool result shown below (nuXmv/Spot/SPIN on page 2, Strix/Kind2 on page 3, Ogma on page 4) is a genuine run against the real binaries, not a mockup; only the LLM split suggestion on page 1 is illustrative text, to avoid an API call. The split shown is a real one, though -- `operationalstate_1`'s four-way output conjunction (`slowdown & !halt & alert & !turnoffUVC`) splits cleanly into two independent pairs, which stage 2 then genuinely confirms is both equivalent to the original and non-degenerate.
+
+**1. Import & Split Review** -- import a FRET file; `classifier_assumption`/`dtt_assumption` are auto-detected as environment assumptions right away, from FRET's own `*_assumption` naming convention.
+
+![Import page, before any file is loaded](docs/screenshots/01_import_empty.png)
+![Import page, after importing the sRobot FRET file -- 13 requirements, two auto-detected as assumptions](docs/screenshots/02_import_loaded.png)
+![A requirement selected, showing its past-time/future-time formula and referenced variables](docs/screenshots/03_select_requirement.png)
+![A split accepted into two sub-formulas, with the reference check confirming every identifier is a declared variable](docs/screenshots/04_split_suggestion.png)
+
+**2. Decomposition Validation** -- the "what's being tested" block spells out the exact comparison before showing real nuXmv/Spot/SPIN results underneath.
+
+![nuXmv, Spot, and SPIN all confirming the split is equivalent to the original and that neither half alone already covers it](docs/screenshots/05_decomposition_validation.png)
+
+**3. Realizability Check** -- Strix and Kind2 cross-check the entire system at once; they can genuinely disagree, which is itself useful information (see "Assumptions vs. guarantees" below for why Kind2's answer carries more weight here).
+
+![Strix reporting unrealizable with a caveat explaining why, Kind2 reporting realizable](docs/screenshots/06_realizability_check.png)
+
+**4. Ogma/Copilot Export** -- "Auto-suggest Groups" clusters requirements sharing a variable into one monitoring group; export produces a real ROS2 Copilot package for whichever group is selected.
+
+![Auto-suggested monitoring groups, built from the real leaf requirements](docs/screenshots/07_monitor_groups.png)
+![A real monitor package generated via Ogma for the selected group](docs/screenshots/08_monitor_generated.png)
+
 ## Pipeline stages
 
 1. **Import & Split Review** — import a FRET project export (`requirements`/`variables` JSON), pick one requirement, and let an LLM suggest whether/how many ways to split its LTL formula. Review and accept or reject the suggestion; if accepted, the LLM performs the split into editable sub-formulas. If the LLM doesn't recommend a split, a "Force split anyway" option appears to ask it for one regardless. Accepting a split prompts for a filename and saves it as a **new copy** of the FRET file, with the sub-formulas appended as requirements nested under the original (shown as a dropdown in the requirement tree) — the original file is never modified, and the new copy becomes the active file for the rest of the session. Each requirement also has an **Assumption** checkbox (seeded from FRET's `*_assumption` naming convention, correctable by hand) marking it as an environment constraint rather than a system guarantee -- used by stage 3.
