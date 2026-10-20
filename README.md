@@ -66,7 +66,12 @@ Two smaller SPIN syntax issues were found and fixed alongside this: `spin -f` ne
 
 ## Ogma's known limitation (stage 4)
 
-Ogma's LTL parser (as installed, `ogma-cli` 1.15.0) accepts a single temporal operator wrapping an otherwise-propositional formula (`G (x)`, `H (x -> y)`) but not formulas with *nested* temporal operators — `G (x -> F y)`, one of the most common LTL patterns — which fails with a misleadingly worded `cannot open input specification file` error. `ogma.py` detects that specific message and appends a clarifying note rather than leaving it cryptic, but there's no code-level workaround — it's a real limitation of the tool as installed.
+Ogma (as installed, `ogma-cli` 1.16.0) still can't actually turn a formula with a *nested* temporal operator — `G (x -> F y)`, one of the most common LTL patterns — into a working monitor, but the failure mode changed with the 1.15.0 → 1.16.0 upgrade, and is worse, not better:
+
+- **Before (1.15.0):** `ogma ros` itself rejected the formula immediately, with a (misleadingly worded) `cannot open input specification file` error. `generate_ros2_monitor` caught that specific message and raised a clear, actionable error right there in the GUI.
+- **Now (1.16.0):** `ogma ros` accepts the formula and reports success -- `generate_ros2_monitor` returns normally, and the GUI shows "Generated monitor package" -- but the `Copilot.hs` it wrote is ill-typed Haskell (confirmed by hand: both an unbounded `G (x -> F y)` and a bounded `G (x -> F[0,5] y)` produce an `always`/`eventually` call missing required arguments) and fails at the `runhaskell Copilot.hs` compile step from "Using the generated monitor" below, with a GHC type error that gives no hint the root cause is a nested operator. The failure moved later in the workflow and got harder to diagnose, not fixed.
+
+`ogma.py`'s `cannot open input specification file` detection is harmless but no longer fires for this case under 1.16.0 -- there's currently no code-level workaround catching it earlier; avoid nesting temporal operators in sub-formulas headed for stage 4 until Ogma actually supports it.
 
 ## Using the generated monitor (stage 4)
 
