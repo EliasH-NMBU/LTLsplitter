@@ -65,6 +65,39 @@ def _strip_enclosing_parens(s: str) -> str:
     return s
 
 
+def _substitute_internal_variables(formula: str, variables: list[Variable]) -> str:
+    """Replaces each Internal-role variable's bare name with its (parenthesized) defining
+    expression -- confirmed by hand this matters, not a hypothetical gap: unlike nuXmv (which
+    gets this right via a DEFINE), neither Spot nor SPIN have any model/DEFINE concept of their
+    own, so without this they silently treated a derived variable (e.g. FRET's
+    "dgt_3 := distance_to_target > 3") as an *independent* free proposition, decoupled from the
+    real variable it comes from. That produced a false "not tautology" for the exact case
+    `test_nuxmv_substitutes_internal_variable_via_define` already confirms nuXmv gets right:
+    "(G dgt_3) <-> (G (distance_to_target > 3))" is a genuine tautology by dgt_3's own
+    definition, but Spot/SPIN found a "counterexample" where they disagree -- impossible in
+    reality, since dgt_3 can't actually take a value other than that comparison's.
+
+    Internal variables are not confirmed, in any real FRET export seen so far, to be defined in
+    terms of other Internal variables, but that's not ruled out either -- this repeats
+    substitution until no further Internal variable name remains in the formula (bounded by the
+    number of Internal variables, enough for any acyclic dependency chain) rather than assuming
+    one pass is always enough."""
+    internal_by_name = {v.name: v.assignment for v in variables if v.role == VariableRole.INTERNAL and v.assignment}
+    if not internal_by_name:
+        return formula
+
+    for _ in range(len(internal_by_name) + 1):
+        changed = False
+        for name, assignment in internal_by_name.items():
+            pattern = re.compile(rf"\b{re.escape(name)}\b")
+            if pattern.search(formula):
+                formula = pattern.sub(lambda _m, expr=assignment: f"({expr})", formula)
+                changed = True
+        if not changed:
+            break
+    return formula
+
+
 def _is_trivial_tautology(formula: str) -> bool:
     """Fast-path, no-tool-needed check: "(X) <-> (X)" (identical text, modulo redundant
     wrapping parens, on both sides of a top-level biconditional -- exactly the shape
@@ -161,6 +194,10 @@ def _check_tautology_nuxmv(formula: str, variables: list[Variable]) -> _Tautolog
 
 
 def _check_tautology_spot(formula: str, variables: list[Variable]) -> _TautologyCheck:
+    if _is_trivial_tautology(formula):
+        return _TautologyCheck("tautology")
+
+    formula = _substitute_internal_variables(formula, variables)
     if _is_trivial_tautology(formula):
         return _TautologyCheck("tautology")
 
@@ -277,6 +314,10 @@ def _promela_model(formula: str, variables: list[Variable], start_first: bool) -
 
 
 def _check_tautology_spin(formula: str, variables: list[Variable]) -> _TautologyCheck:
+    if _is_trivial_tautology(formula):
+        return _TautologyCheck("tautology")
+
+    formula = _substitute_internal_variables(formula, variables)
     if _is_trivial_tautology(formula):
         return _TautologyCheck("tautology")
 

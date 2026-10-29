@@ -129,6 +129,29 @@ def test_check_realizability_typed_flags_not_realizable_results_as_a_possible_ab
 
 
 @requires_strix
+def test_check_realizability_typed_flags_the_caveat_for_bare_internal_variable_references_too():
+    # Regression test: a requirement can reference an Internal variable directly (e.g. "far"),
+    # with no "variable OP literal" text anywhere in the formula -- the caveat above only fired
+    # for the latter, missing this case even though it carries the exact same risk. Confirmed by
+    # hand: two Internal variables that are logical complements of the same base variable
+    # ("far := distance > 7", "near := distance <= 7") produce a spurious NOT REALIZABLE verdict,
+    # since Strix's environment gets to pick them independently -- a combination that can't
+    # actually happen.
+    distance = Variable(name="distance", type=VariableType.INT, role=VariableRole.INPUT)
+    far = Variable(name="far", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 7")
+    near = Variable(name="near", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance <= 7")
+    alarm = Variable(name="alarm", type=VariableType.BOOL, role=VariableRole.OUTPUT)
+
+    result = check_realizability_typed(
+        "(G ((far -> alarm) & (near -> (! alarm))))", [distance, far, near, alarm], "r1",
+    )
+
+    assert result.realizable is False
+    assert "Internal (derived) variables" in result.details
+    assert "Kind2" in result.details
+
+
+@requires_strix
 def test_check_realizability_typed_does_not_add_the_caveat_for_purely_boolean_formulas():
     # No typed comparisons were abstracted here -- Strix sees exactly the formula as written,
     # so a NOT REALIZABLE verdict is not an abstraction artifact and shouldn't be captioned as one.
