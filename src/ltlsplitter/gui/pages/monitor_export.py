@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from ltlsplitter.core.models import FretRequirement, Specification
+from ltlsplitter.core.models import FretRequirement, Specification, Variable, VariableRole
 from ltlsplitter.core.monitor_grouping import suggest_groups
 from ltlsplitter.core.ogma import ToolNotFoundError, generate_ros2_monitor
 from ltlsplitter.core.project_state import ProjectState
@@ -54,11 +54,25 @@ class MonitorExportPage(WizardPage):
         super().__init__(state, parent)
         self._output_dir: Path | None = None
         self._tree_built_for_reqids: frozenset[str] | None = None
+        self._topics_built_for_names: frozenset[str] | None = None
 
         self.content_layout.addWidget(QLabel("Source file:"))
         self.source_file_label = QLabel()
         self.source_file_label.setWordWrap(True)
         self.content_layout.addWidget(self.source_file_label)
+
+        topics_label = QLabel(
+            "Variable subscriptions (ROS topics the generated monitor subscribes to for each "
+            "variable's live value -- double-click Topic to edit; defaults to /<variable name>):"
+        )
+        topics_label.setWordWrap(True)
+        self.content_layout.addWidget(topics_label)
+        self.topics_tree = QTreeWidget()
+        self.topics_tree.setHeaderLabels(["Variable", "Topic"])
+        self.topics_tree.setRootIsDecorated(False)
+        self.topics_tree.setMinimumHeight(120)
+        self.topics_tree.itemChanged.connect(self._on_topic_item_changed)
+        self.content_layout.addWidget(self.topics_tree)
 
         self.content_layout.addWidget(QLabel("Monitoring groups (drag requirements between groups):"))
 
@@ -118,6 +132,9 @@ class MonitorExportPage(WizardPage):
         current_reqids = frozenset(r.reqid for r in self._leaf_requirements())
         if current_reqids != self._tree_built_for_reqids:
             self._rebuild_tree_everything_ungrouped()
+        current_variable_names = frozenset(v.name for v in self._exportable_variables())
+        if current_variable_names != self._topics_built_for_names:
+            self._rebuild_topics_tree()
         if self.state.generated_monitor_path:
             set_status(self.status_label, "success")
             self.status_label.setText(f"Last generated monitor: {self.state.generated_monitor_path}")
@@ -126,6 +143,41 @@ class MonitorExportPage(WizardPage):
         if not self.state.fret_import:
             return []
         return self.state.fret_import.leaf_requirements()
+
+    def _exportable_variables(self) -> list[Variable]:
+        """Every variable the generated monitor could subscribe to -- Internal variables are
+        derived at runtime from their `assignment` expression (see ogma.py's
+        `_build_variable_db`), never observed on a topic directly, so they're excluded here too."""
+        if not self.state.fret_import:
+            return []
+        return [v for v in self.state.fret_import.variables if v.role != VariableRole.INTERNAL]
+
+    def _rebuild_topics_tree(self) -> None:
+        """Rebuilt only when the exportable variable set actually changes (a fresh import, or a
+        split that introduces/removes variables) -- revisiting this page otherwise must not
+        discard topic overrides the user already typed in, the same rule `on_show` already
+        follows for the group tree."""
+        variables = self._exportable_variables()
+        self.topics_tree.blockSignals(True)
+        self.topics_tree.clear()
+        for var in variables:
+            if not var.topic:
+                var.topic = f"/{var.name}"  # seed the editable default in place
+            item = QTreeWidgetItem([var.name, var.topic])
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable)
+            item.setData(0, Qt.ItemDataRole.UserRole, var)
+            self.topics_tree.addTopLevelItem(item)
+        self.topics_tree.blockSignals(False)
+        self._topics_built_for_names = frozenset(v.name for v in variables)
+
+    def _on_topic_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        if column != 1:  # the Variable column (0) is shown, not meant to be renamed here
+            return
+        var = item.data(0, Qt.ItemDataRole.UserRole)
+        if var is None:
+            return
+        var.topic = item.text(1).strip() or f"/{var.name}"
+        item.setText(1, var.topic)
 
     def _render_source_file(self) -> None:
         """Shows the active FRET file -- `state.fret_import_path`, the same field `_save_split`

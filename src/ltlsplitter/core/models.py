@@ -25,7 +25,11 @@ class VariableRole(str, Enum):
 class Variable:
     name: str
     type: VariableType
-    ros_node: str = ""
+    topic: str = ""
+    """The ROS topic the generated Ogma monitor subscribes to for this variable's live value
+    (see ogma.py's `_build_variable_db`). Empty means "not set yet" -- the monitor-export page
+    seeds it to the default `/{name}` the first time it's shown, and the user can override it
+    from there (e.g. when the real system actually publishes it under a different topic name)."""
     role: VariableRole = VariableRole.INPUT
     min_value: float | None = None
     max_value: float | None = None

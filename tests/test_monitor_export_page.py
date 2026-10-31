@@ -121,6 +121,104 @@ def test_on_show_without_an_import_shows_placeholder(qtbot):
     assert "no file imported" in page.source_file_label.text().lower()
 
 
+# -- variable topics -----------------------------------------------------------------------
+
+
+def _topic_rows(page: MonitorExportPage) -> dict[str, str]:
+    return {
+        page.topics_tree.topLevelItem(i).text(0): page.topics_tree.topLevelItem(i).text(1)
+        for i in range(page.topics_tree.topLevelItemCount())
+    }
+
+
+def test_on_show_seeds_default_topics_for_input_and_output_variables(qtbot):
+    page = MonitorExportPage(_state_with_import())
+    qtbot.addWidget(page)
+
+    page.on_show()
+
+    assert _topic_rows(page) == {"request": "/request", "grant": "/grant"}
+
+
+def test_internal_variables_are_excluded_from_the_topics_table(qtbot):
+    fret_import = FretImport(
+        project="demo",
+        requirements=[_req("r1", variables=["a", "b"])],
+        variables=[
+            Variable(name="a", type=VariableType.BOOL, role=VariableRole.INPUT),
+            Variable(name="b", type=VariableType.BOOL, role=VariableRole.INTERNAL),
+        ],
+    )
+    page = MonitorExportPage(ProjectState(fret_import=fret_import, fret_import_path="/f.json"))
+    qtbot.addWidget(page)
+
+    page.on_show()
+
+    assert _topic_rows(page) == {"a": "/a"}
+
+
+def test_editing_a_topic_cell_updates_the_underlying_variable(qtbot):
+    state = _state_with_import()
+    page = MonitorExportPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    item = page.topics_tree.topLevelItem(0)
+
+    item.setText(1, "/sensors/request")
+
+    assert state.fret_import.variables[0].topic == "/sensors/request"
+
+
+def test_clearing_a_topic_cell_falls_back_to_the_default(qtbot):
+    state = _state_with_import()
+    page = MonitorExportPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    item = page.topics_tree.topLevelItem(0)
+
+    item.setText(1, "   ")
+
+    assert state.fret_import.variables[0].topic == "/request"
+    assert item.text(1) == "/request"
+
+
+def test_revisiting_the_page_preserves_a_topic_override(qtbot):
+    """Same rule as the group tree: an unchanged variable set must not silently discard an
+    override the user already typed in just because the page was shown again."""
+    state = _state_with_import()
+    page = MonitorExportPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    page.topics_tree.topLevelItem(0).setText(1, "/custom/topic")
+
+    page.on_show()
+
+    assert _topic_rows(page)["request"] == "/custom/topic"
+
+
+def test_generate_passes_the_overridden_topic_through_to_ogma(qtbot, monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_generate(specs, output_dir, variables):
+        captured["variables"] = variables
+        return output_dir
+
+    monkeypatch.setattr("ltlsplitter.gui.pages.monitor_export.generate_ros2_monitor", fake_generate)
+    state = _state_with_import()
+    page = MonitorExportPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    page.topics_tree.topLevelItem(0).setText(1, "/custom/topic")
+    page._on_auto_suggest_clicked()
+    page._output_dir = tmp_path
+    page.export_group_combo.setCurrentIndex(0)
+
+    page._on_generate_clicked()
+
+    by_name = {v.name: v.topic for v in captured["variables"]}
+    assert by_name["request"] == "/custom/topic"
+
+
 def test_on_show_displays_previously_generated_path(qtbot):
     state = ProjectState(generated_monitor_path="/tmp/some/pkg")
     page = MonitorExportPage(state)

@@ -127,7 +127,7 @@ def _build_variable_db(variables: list[Variable]) -> dict:
     for var in variables:
         if var.role == VariableRole.INTERNAL:
             continue
-        topic = f"/{var.name}"
+        topic = var.topic or f"/{var.name}"
         inputs.append({
             "name": var.name,
             "type": _C_TYPES[var.type],

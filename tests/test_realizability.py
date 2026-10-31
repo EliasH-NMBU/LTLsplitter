@@ -34,7 +34,7 @@ def test_check_consistency_detects_conflict():
         Specification(requirement_id="r1", ltl_formula="G x"),
         Specification(requirement_id="r2", ltl_formula="G !x"),
     ]
-    variables = [Variable(name="x", type=VariableType.BOOL, ros_node="/n")]
+    variables = [Variable(name="x", type=VariableType.BOOL, topic="/n")]
 
     result = check_consistency(specs, variables)
 
@@ -49,8 +49,8 @@ def test_check_consistency_passes_for_compatible_specs():
         Specification(requirement_id="r2", ltl_formula="F x"),
     ]
     variables = [
-        Variable(name="x", type=VariableType.BOOL, ros_node="/n"),
-        Variable(name="y", type=VariableType.BOOL, ros_node="/n"),
+        Variable(name="x", type=VariableType.BOOL, topic="/n"),
+        Variable(name="y", type=VariableType.BOOL, topic="/n"),
     ]
 
     result = check_consistency(specs, variables)
@@ -66,8 +66,8 @@ def test_check_consistency_isolates_conflict_from_unrelated_requirement():
         Specification(requirement_id="r3", ltl_formula="F y"),
     ]
     variables = [
-        Variable(name="x", type=VariableType.BOOL, ros_node="/n"),
-        Variable(name="y", type=VariableType.BOOL, ros_node="/n"),
+        Variable(name="x", type=VariableType.BOOL, topic="/n"),
+        Variable(name="y", type=VariableType.BOOL, topic="/n"),
     ]
 
     result = check_consistency(specs, variables)
