@@ -1,0 +1,137 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{threeparttable}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\captionsetup{font=small, labelfont=bf}
+\renewcommand{\arraystretch}{1.25}
+
+\title{Validation Tooling in LTLsplitter: \\ Model Checkers and Realizability Tools}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+LTLsplitter validates an LLM-proposed decomposition of a FRET LTL requirement, and the
+realizability of the resulting specification, using five external formal tools rather than
+one. Three tools (\textsc{nuXmv}, \textsc{Spot}, \textsc{SPIN}) cross-check \emph{logical
+equivalence} between the original requirement and the conjunction of its sub-formulas; two
+tools (\textsc{Strix}, \textsc{Kind2}) independently check \emph{realizability} of the
+specification against an adversarial environment. Using more than one tool per question is a
+deliberate redundancy: each tool is built on a different algorithmic foundation and has
+different blind spots, so agreement across tools is a stronger correctness signal than any
+single tool's verdict. Table~\ref{tab:validation-tools} summarizes each tool; the differences
+in approach are discussed in Section~\ref{sec:discussion}.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{threeparttable}
+\caption{Model checkers and realizability tools used for specification validation in LTLsplitter.}
+\label{tab:validation-tools}
+\begin{tabularx}{\textwidth}{@{} l l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X @{}}
+\toprule
+\textbf{Tool} & \textbf{Underlying technique} & \textbf{Role in LTLsplitter} & \textbf{Benefits} & \textbf{Shortcomings} \\
+\midrule
+\textbf{nuXmv}
+  & Symbolic model checking (BDD / SAT-based bounded model checking)
+  & Requirement-set \emph{consistency} (ReqAn: can all requirements hold simultaneously?) and \emph{equivalence} checking of past-time LTL formulas
+  & Natively understands past-time LTL (H/O/S/Y) -- FRET's native output form; typed variables (bounded int, enum) modeled exactly, not abstracted; one tool covers two of the four checks
+  & Symbolic (BDD/SAT) engines can scale poorly on large or highly disjunctive variable domains; Linux binary distribution is fragile (missing shared-library versions on modern distros) \\
+\textbf{Spot} (\texttt{ltlfilt})
+  & Automata-theoretic equivalence (Büchi automaton language containment, via \texttt{--equivalent-to})
+  & Independent \emph{equivalence}/tautology check of the future-time (ft) form of the same formulas
+  & Fast, purpose-built equivalence test; accepts a quoted string as an opaque atomic proposition, so typed comparisons (e.g.\ \texttt{"x = 1"}) need no renaming scheme
+  & Future-time LTL only -- cannot parse FRET's native past-time form, so it checks a translated form rather than the original requirement directly \\
+\textbf{SPIN}
+  & Explicit-state model checking (never-claim product automaton + exhaustive search)
+  & Third, independently-implemented \emph{equivalence} check of the ft form, deliberately redundant with Spot
+  & A genuinely different algorithm family (explicit-state vs.\ symbolic/automata) catches bugs the other two share by construction; produces concrete counterexample traces
+  & Requires a hand-built, free-running Promela model per formula; the search can get stuck at depth~0 depending on the initial state chosen; needs a C compiler at runtime \\
+\textbf{Strix}
+  & Reactive synthesis (parity-game solving over $\omega$-automata)
+  & GR(1)-style \emph{realizability}: does a system strategy exist that satisfies the spec against every adversarial input sequence?
+  & Directly answers the two-player-game realizability question; mature, well-tested LTL synthesis engine
+  & Parser accepts only bare-identifier boolean propositions -- typed/arithmetic atoms must be abstracted into fresh booleans, which can produce spurious \textsc{unrealizable} verdicts by dropping real correlations between values \\
+\textbf{Kind2}
+  & SMT-based $k$-induction over Lustre contracts (\texttt{CONTRACTCK})
+  & Independent \emph{realizability} cross-check against Strix, via a contract-realizability analysis
+  & Models int/real/enum variables natively (Lustre has real types) -- no abstraction gap, so it is not fooled by the artifact that can make Strix say \textsc{unrealizable}; separates environment assumptions from system guarantees
+  & Has no native past-time operator, so past-time formulas must be hand-compiled into Lustre ``ghost'' variables recurring on \texttt{pre}; SMT/$k$-induction can fail to converge on complex contracts \\
+\bottomrule
+\end{tabularx}
+\begin{tablenotes}
+\footnotesize
+\item GR(1) = Generalized Reactivity(1), a tractable fragment of LTL realizability (polynomial-time synthesis, vs.\ 2EXPTIME for general LTL).
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\section{Discussion: what the table does not say explicitly}
+\label{sec:discussion}
+
+\textbf{Three different questions, not one.} ``Consistency'' (nuXmv/ReqAn) asks whether a set
+of requirements can hold \emph{simultaneously} on some trace -- a satisfiability question.
+``Equivalence'' (nuXmv, Spot, SPIN) asks whether two formulas denote the \emph{same} set of
+traces -- used here to check that a decomposition is faithful to the original requirement, and
+that no sub-formula is itself already the whole requirement in disguise (non-degeneracy).
+``Realizability'' (Strix, Kind2) is a strictly harder, two-player question: does a
+\emph{system strategy} exist that wins against every move an adversarial environment could
+make -- this is undecidable in general and 2EXPTIME-complete for full LTL, which is why both
+realizability tools restrict to a tractable fragment (GR(1) for Strix; contract-shaped
+specifications for Kind2) rather than attacking arbitrary LTL directly.
+
+\textbf{Redundancy is cross-validation, not duplication.} The three equivalence checkers agree
+on the question but disagree on algorithm (symbolic BDD/SAT, automata-theoretic, explicit-state)
+and on which temporal direction they accept (past-time vs.\ future-time LTL). A verdict that
+only one tool reaches is treated with suspicion; agreement across algorithmically unrelated
+tools is the actual correctness signal. The same logic applies to Strix vs.\ Kind2 for
+realizability: they disagree on algorithm (game synthesis vs.\ SMT/$k$-induction) and, crucially,
+on how precisely they model typed variables -- Kind2's native typing makes it the arbiter when
+Strix's abstraction-driven \textsc{unrealizable} verdict is suspected to be an artifact rather
+than a genuine synthesis failure.
+
+\section{Supporting pipeline tools: FRET and Ogma/Copilot}
+
+FRET and Ogma are part of the same end-to-end pipeline but are \emph{not} validation tools in
+the sense of Table~\ref{tab:validation-tools} -- neither one checks a property of a
+specification the way nuXmv, Spot, SPIN, Strix, or Kind2 do. Table~\ref{tab:pipeline-tools}
+places them relative to the validation stage.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabularx}{\textwidth}{@{} l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X @{}}
+\toprule
+\textbf{Tool} & \textbf{What it is} & \textbf{Why it is not a validation tool} \\
+\midrule
+\textbf{FRET} (NASA)
+  & A GUI for eliciting requirements in structured English (``FRETish'') and formalizing them into past-time LTL. It runs its own internal consistency/realizability checks (via NuSMV/Kind2) before export.
+  & FRET's checks happen \emph{upstream} of LTLsplitter, on the original requirement, before import -- it is a requirements-elicitation and formalization tool, not something LTLsplitter invokes to validate a decomposition or synthesize a strategy. \\
+\textbf{Ogma / Copilot} (NASA)
+  & Ogma is a Haskell code-generation CLI that wraps Copilot, a stream-processing DSL compiling to hard-real-time C99. Given an already-validated LTL/Lustre/SMV specification, \texttt{ogma ros} generates a self-contained ROS2 package: a monitor node that subscribes to input topics, re-evaluates the properties, and publishes violations.
+  & It performs \emph{runtime monitoring}, not design-time formal verification: it does not prove anything about the specification itself, it compiles an already-checked specification into executable code that watches a live system trace. It runs \emph{after} every check in Table~\ref{tab:validation-tools} has passed, not instead of them. \\
+\bottomrule
+\end{tabularx}
+\caption{Supporting pipeline tools: requirements elicitation (FRET) and runtime monitor synthesis (Ogma/Copilot), shown against the design-time validation tools of Table~\ref{tab:validation-tools}.}
+\label{tab:pipeline-tools}
+\end{table}
+
+In short: FRET sits \emph{before} validation (it produces the LTL that gets split and checked),
+the five tools in Table~\ref{tab:validation-tools} sit \emph{during} validation (they check the
+split is faithful and the result is realizable), and Ogma/Copilot sits \emph{after} validation
+(it turns the now-trusted specification into a deployed runtime monitor). None of the three
+stages substitutes for another: FRET's own NuSMV/Kind2 checks do not know about the LLM-proposed
+split, and Ogma does not check correctness at all -- it assumes the specification handed to it
+is already correct.
+
+\end{document}

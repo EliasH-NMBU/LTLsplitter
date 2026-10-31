@@ -7,6 +7,7 @@ from ltlsplitter.gui.pages.decomposition_validation import DecompositionValidati
 from ltlsplitter.gui.pages.import_split import ImportSplitPage
 from ltlsplitter.gui.pages.monitor_export import MonitorExportPage
 from ltlsplitter.gui.pages.realizability_check import RealizabilityCheckPage
+from ltlsplitter.gui.theme import theme_manager
 
 PAGE_CLASSES = [
     ImportSplitPage,
@@ -29,6 +30,16 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page_class(self.state))
         self.stack.currentChanged.connect(self._on_page_changed)
 
+        self.theme_button = QPushButton()
+        self.theme_button.clicked.connect(theme_manager.toggle)
+        theme_manager.changed.connect(self._update_theme_button)
+        self._update_theme_button(theme_manager.mode)
+
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(20, 10, 20, 0)
+        top_bar.addStretch()
+        top_bar.addWidget(self.theme_button)
+
         self.back_button = QPushButton("Back")
         self.next_button = QPushButton("Next")
         self.next_button.setObjectName("primaryButton")  # the one button on every page that
@@ -49,6 +60,7 @@ class MainWindow(QMainWindow):
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
+        central_layout.addLayout(top_bar)
         central_layout.addWidget(self.stack)
         central_layout.addLayout(nav_layout)
         self.setCentralWidget(central)
@@ -66,6 +78,9 @@ class MainWindow(QMainWindow):
 
     def _on_page_changed(self, index: int) -> None:
         self.stack.widget(index).on_show()
+
+    def _update_theme_button(self, mode: str) -> None:
+        self.theme_button.setText("Light mode" if mode == "dark" else "Dark mode")
 
     def _update_nav_buttons(self) -> None:
         index = self.stack.currentIndex()

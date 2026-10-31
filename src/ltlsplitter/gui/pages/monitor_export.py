@@ -21,7 +21,7 @@ from ltlsplitter.core.monitor_grouping import suggest_groups
 from ltlsplitter.core.ogma import ToolNotFoundError, generate_ros2_monitor
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
-from ltlsplitter.gui.theme import compact
+from ltlsplitter.gui.theme import compact, set_status
 
 _UNGROUPED = "Ungrouped"
 
@@ -119,7 +119,7 @@ class MonitorExportPage(WizardPage):
         if current_reqids != self._tree_built_for_reqids:
             self._rebuild_tree_everything_ungrouped()
         if self.state.generated_monitor_path:
-            self.status_label.setStyleSheet("color: #1a7f37;")
+            set_status(self.status_label, "success")
             self.status_label.setText(f"Last generated monitor: {self.state.generated_monitor_path}")
 
     def _leaf_requirements(self) -> list[FretRequirement]:
@@ -285,16 +285,16 @@ class MonitorExportPage(WizardPage):
         try:
             package_dir = generate_ros2_monitor(specs, target_dir, variables)
         except ToolNotFoundError as exc:
-            self.status_label.setStyleSheet("color: #666;")
+            set_status(self.status_label, "muted")
             self.status_label.setText(str(exc))
             return
         except Exception as exc:  # noqa: BLE001 -- surface any ogma subprocess failure to the user
-            self.status_label.setStyleSheet("color: #b00020;")
+            set_status(self.status_label, "danger")
             self.status_label.setText(f"Generation failed: {exc}")
             return
 
         self.state.generated_monitor_path = str(package_dir)
-        self.status_label.setStyleSheet("color: #1a7f37;")
+        set_status(self.status_label, "success")
         self.status_label.setText(
             f'Generated monitor package for "{group_name}" at {package_dir}\n\n'
             "Next: compile the Copilot spec (runhaskell copilot/src/Copilot.hs), then colcon "

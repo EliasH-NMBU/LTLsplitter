@@ -7,7 +7,7 @@ from ltlsplitter.core.models import RealizabilityResult, VariableRole
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.realizability import ToolNotFoundError, check_realizability_typed
 from ltlsplitter.gui.pages.base import WizardPage
-from ltlsplitter.gui.theme import compact
+from ltlsplitter.gui.theme import compact, set_status
 
 
 class RealizabilityCheckPage(WizardPage):
@@ -51,13 +51,13 @@ class RealizabilityCheckPage(WizardPage):
     @staticmethod
     def _render(label: QLabel, result: RealizabilityResult | None) -> None:
         if result is None:
-            label.setStyleSheet("")
+            set_status(label, None)
             label.setText("(not checked yet)")
         elif result.realizable:
-            label.setStyleSheet("color: #1a7f37;")
+            set_status(label, "success")
             label.setText("Realizable: a satisfying strategy exists." + (f" {result.details}" if result.details else ""))
         else:
-            label.setStyleSheet("color: #b00020;")
+            set_status(label, "danger")
             counterexample = f" Counterexample: {result.counterexample}" if result.counterexample else ""
             label.setText(f"Not realizable. {result.details}{counterexample}".strip())
 

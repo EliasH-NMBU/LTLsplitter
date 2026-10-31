@@ -25,7 +25,7 @@ from ltlsplitter.core.models import SubFormula
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.reference_check import find_undeclared_references
 from ltlsplitter.gui.pages.base import WizardPage
-from ltlsplitter.gui.theme import compact
+from ltlsplitter.gui.theme import compact, set_status
 
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
@@ -428,8 +428,8 @@ class ImportSplitPage(WizardPage):
                 if name not in undeclared:
                     undeclared.append(name)
         if undeclared:
-            self.reference_label.setStyleSheet("color: #b00020;")
+            set_status(self.reference_label, "danger")
             self.reference_label.setText("Possibly undeclared: " + ", ".join(undeclared))
         else:
-            self.reference_label.setStyleSheet("color: #1a7f37;")
+            set_status(self.reference_label, "success")
             self.reference_label.setText("All referenced identifiers are declared variables.")

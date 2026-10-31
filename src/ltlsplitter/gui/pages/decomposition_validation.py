@@ -8,7 +8,7 @@ from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose
 from ltlsplitter.core.models import FretRequirement, ToolCheckResult
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
-from ltlsplitter.gui.theme import compact
+from ltlsplitter.gui.theme import compact, set_status
 
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
@@ -118,8 +118,9 @@ class DecompositionValidationPage(WizardPage):
             self.nondegeneracy_label.setText("")
             return
 
-        self.equivalence_label.setStyleSheet(
-            "color: #1a7f37;" if all(r.passed for r in validation.equivalence) else "color: #b00020;"
+        set_status(
+            self.equivalence_label,
+            "success" if all(r.passed for r in validation.equivalence) else "danger",
         )
         self.equivalence_label.setText(self._format_results(validation.equivalence))
 
@@ -127,14 +128,15 @@ class DecompositionValidationPage(WizardPage):
             lines = []
             for sub_id, results in validation.nondegeneracy.items():
                 lines.append(f"{sub_id}:\n" + self._format_results(results))
-            self.nondegeneracy_label.setStyleSheet(
-                "color: #1a7f37;"
+            set_status(
+                self.nondegeneracy_label,
+                "success"
                 if all(r.passed for results in validation.nondegeneracy.values() for r in results)
-                else "color: #b00020;"
+                else "danger",
             )
             self.nondegeneracy_label.setText("\n".join(lines))
         else:
-            self.nondegeneracy_label.setStyleSheet("")
+            set_status(self.nondegeneracy_label, None)
             self.nondegeneracy_label.setText("(single formula, not split -- nothing to check)")
 
     def _on_validate_clicked(self) -> None:

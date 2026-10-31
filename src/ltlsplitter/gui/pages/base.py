@@ -3,7 +3,6 @@ from __future__ import annotations
 from PySide6.QtWidgets import QFrame, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ltlsplitter.core.project_state import ProjectState
-from ltlsplitter.gui.theme import ACCENT, BORDER, TEXT_MUTED
 
 
 class WizardPage(QWidget):
@@ -33,19 +32,20 @@ class WizardPage(QWidget):
         scroll_area.setWidget(content_widget)
 
         title_label = QLabel(self.title)
-        title_label.setStyleSheet(f"font-size: 19px; font-weight: 700; color: {ACCENT};")
+        title_label.setObjectName("pageTitle")  # styled by theme.py's QLabel#pageTitle rule,
+        # so it follows a theme toggle instead of being locked to the color baked in here.
         self.content_layout.addWidget(title_label)
 
         description_label = QLabel(self.description)
         description_label.setWordWrap(True)
-        description_label.setStyleSheet(f"color: {TEXT_MUTED};")
+        description_label.setObjectName("pageDescription")
         self.content_layout.addWidget(description_label)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         divider.setFrameShadow(QFrame.Shadow.Plain)
         divider.setFixedHeight(1)
-        divider.setStyleSheet(f"background-color: {BORDER}; border: none;")
+        divider.setObjectName("divider")
         self.content_layout.addWidget(divider)
         self.content_layout.addSpacing(4)
 
