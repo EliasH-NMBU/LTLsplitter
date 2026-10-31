@@ -21,6 +21,7 @@ _LOCAL_BIN = Path.home() / ".local" / "bin"
 _NUXMV_LIBSHIM = Path.home() / ".local" / "share" / "ltlsplitter-tools" / "nuxmv-libshim"
 
 _SUBPROCESS_TIMEOUT_SECONDS = 120
+_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 
 
 class ToolNotFoundError(RuntimeError):
@@ -217,7 +218,11 @@ def check_realizability_typed(formula: str, variables: list[Variable], requireme
     (e.g. `dgt_7 := distance_to_target > 7`), so treating it as environment-determined is
     correct for that case -- but this is a simplification, not something derived from the
     variable's actual defining expression, and would be wrong for an Internal variable that
-    depends on an Output."""
+    depends on an Output. It's also, like the typed-comparison abstraction above, not aware of
+    relationships *between* Internal variables (e.g. two that are logical complements of each
+    other) -- confirmed this can produce a spurious NOT REALIZABLE verdict, same risk direction
+    as the typed-comparison case, so a NOT REALIZABLE result gets the same caveat appended
+    whenever a bare Internal-variable identifier was referenced, not just a raw comparison."""
     typed_names = {v.name for v in variables if v.type != VariableType.BOOL}
     comparisons, leftover = extract_typed_comparisons(formula, typed_names)
     if leftover:
@@ -242,30 +247,37 @@ def check_realizability_typed(formula: str, variables: list[Variable], requireme
     # Bare Internal-role identifiers (e.g. a derived boolean like "dgt_7" referenced directly,
     # not via a comparison) also need a role bucket for Strix -- same "derived from input"
     # default as above.
+    internal_names = {v.name for v in variables if v.role == VariableRole.INTERNAL}
+    bare_internal_refs = internal_names & set(_IDENTIFIER_RE.findall(formula))
     inputs = [v.name for v in variables if v.role in (VariableRole.INPUT, VariableRole.INTERNAL)] + extra_inputs
     outputs = [v.name for v in variables if v.role == VariableRole.OUTPUT] + extra_outputs
 
     spec = Specification(requirement_id=requirement_id, ltl_formula=renamed_formula)
     result = check_realizability(spec, inputs, outputs)
 
-    # The fresh-name substitution is purely syntactic -- it gives Strix something it can parse,
-    # but drops real relationships the original typed comparisons had (e.g. mutual exclusivity
-    # between "classifier = 0"/"= 1"/"= 2", or a derived variable's correlation with the real
-    # variable it comes from, like "dgt_7 -> dgt_3"), confirmed by hand-adding such a constraint
-    # back into a real unrealizable case and finding it can genuinely flip the verdict. That
-    # only ever hands the *environment* (input-bucketed propositions) impossible combinations it
-    # wouldn't really have -- so a REALIZABLE verdict stays sound (a strategy that wins against a
-    # strictly more-adversarial, over-approximated environment also wins against the real one),
-    # but NOT REALIZABLE is not reliable here: it may just mean "unrealizable against an
-    # abstraction artifact," not the real spec. Kind2 has no such gap, since it models these
-    # variables with their real int/enum types natively.
-    if comparisons and not result.realizable:
+    # Both the fresh-name substitution above AND the bare-Internal-identifier bucketing just
+    # above are purely syntactic -- they give Strix something it can parse, but drop real
+    # relationships the original typed values/derived variables had (e.g. mutual exclusivity
+    # between "classifier = 0"/"= 1"/"= 2", or two Internal variables that are actually logical
+    # complements of each other, like "far := distance > 7" and "near := distance <= 7").
+    # Confirmed by hand, not hypothetical: feeding Strix a requirement built from two such
+    # complementary Internal variables reports UNREALIZABLE even though the real (correlated)
+    # system is realizable -- Strix's environment gets to pick "far" and "near" independently,
+    # a combination that can't actually happen. That only ever hands the *environment*
+    # (input-bucketed propositions) impossible combinations it wouldn't really have -- so a
+    # REALIZABLE verdict stays sound (a strategy that wins against a strictly more-adversarial,
+    # over-approximated environment also wins against the real one), but NOT REALIZABLE is not
+    # reliable here: it may just mean "unrealizable against an abstraction artifact," not the
+    # real spec. Kind2 has no such gap, since it models these variables with their real
+    # int/enum types natively.
+    if (comparisons or bare_internal_refs) and not result.realizable:
         caveat = (
-            "Caveat: this formula required abstracting typed comparisons into independent fresh "
-            "boolean propositions (Strix only accepts bare-identifier atomic propositions), which "
-            "can drop real relationships between the original typed values -- this NOT REALIZABLE "
-            "verdict may be an artifact of that missing correlation rather than a genuine "
-            "synthesis failure. Kind2 models these variables natively and doesn't have this gap."
+            "Caveat: this formula required abstracting typed comparisons and/or Internal "
+            "(derived) variables into independent fresh/bare boolean propositions (Strix only "
+            "accepts bare-identifier atomic propositions), which can drop real relationships the "
+            "original values had -- this NOT REALIZABLE verdict may be an artifact of that "
+            "missing correlation rather than a genuine synthesis failure. Kind2 models these "
+            "variables natively and doesn't have this gap."
         )
         result = RealizabilityResult(realizable=False, details=(result.details + "\n\n" + caveat).strip())
     return result

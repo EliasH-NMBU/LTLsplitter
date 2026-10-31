@@ -88,6 +88,22 @@ Fixing the type-domain issue above led directly to a second, more serious bug, r
 
 Two smaller SPIN syntax issues were found and fixed alongside this: `spin -f` needs `&&`/`||`, not the single `&`/`|` this project's formulas otherwise use everywhere else (a bare `!(x & y)` happening to parse was misleading -- it isn't reliable once combined with a temporal operator like `[]`/`<>` immediately to its left); and Promela's `=` is assignment, not equality, a syntax error inside a compound boolean guard expression (only `==` is valid there) -- `_check_tautology_spin` rewrites just the known comparisons to `==` in the generated never-claim text specifically, leaving this project's own model-generation code (where `=` is a genuine assignment) untouched.
 
+### Internal (derived) variables weren't substituted for Spot/SPIN/Strix either (found via review, fixed)
+
+nuXmv and Kind2 both correctly substitute an `Internal`-role variable's defining expression (e.g. FRET's `dgt_3 := distance_to_target > 3`) via a real `DEFINE`/Lustre ghost variable -- `dgt_3` is checked as *exactly* that derived value, never as anything else. Spot, SPIN, and Strix had no equivalent at all: `dgt_3` was treated as an *independent* free proposition, with nothing tying it back to the variable it's derived from. Confirmed as a real, live bug, not hypothetical, using the exact case the existing nuXmv test (`test_nuxmv_substitutes_internal_variable_via_define`) already gets right:
+
+```
+(G dgt_3) <-> (G (distance_to_target > 3))   -- a genuine tautology, by dgt_3's own definition
+
+nuXmv:  tautology        (correct)
+Spot:   not_tautology    (wrong -- fixed)
+SPIN:   not_tautology    (wrong -- fixed)
+```
+
+**Fixed for Spot and SPIN**: `equivalence_check.py`'s new `_substitute_internal_variables()` replaces every Internal variable's bare name with its parenthesized defining expression before either tool sees the formula (repeated to a fixed point, in case one Internal variable is ever defined in terms of another) -- both tools then see the real expression directly, the same thing nuXmv's `DEFINE` already encodes.
+
+**Strix has the same underlying problem, but can't be fixed the same way**: substituting the expression just produces *another* independent fresh proposition (via the typed-comparison abstraction above), not a solution, since Strix still has no way to know two Internal variables might be related -- e.g. `far := distance > 7` and `near := distance <= 7` are logical complements, but Strix's environment can still pick both `far` and `near` true at once, an impossible combination. Confirmed by hand: this produces a spurious `UNREALIZABLE` verdict for a specification that genuinely is realizable (confirmed via Kind2, which has no such gap). Properly fixing this needs real mutual-exclusivity inference between arbitrary comparisons/derived variables -- out of scope here, the same "comparable in size to the Kind2 integration" effort flagged when this project first scoped the typed-variable work. What *is* fixed: `check_realizability_typed`'s existing abstraction-artifact caveat (see below) previously only fired for raw `variable OP literal` text; it now also fires whenever a bare Internal-variable identifier was referenced, so this failure mode is at least honestly flagged instead of presented as a confident final verdict.
+
 ## Ogma's known limitation (stage 4)
 
 **Ogma/Copilot only understands past-time LTL.** This pipeline only ever feeds it the **pt** form (`monitor_export.py` builds every `Specification` from `req.pt_formula`, never `ft_formula`) -- not a style choice, but the only form Copilot's generated code can actually express a property in. Everything below is about what happens if a *future-time* formula reaches Ogma anyway (e.g. from code outside this pipeline's normal flow, since nothing enforces this at the API boundary): Ogma (as installed, `ogma-cli` 1.16.0) still can't actually turn a **future-time** formula with a *nested* temporal operator — `G (x -> F y)`, one of the most common LTL patterns — into a working monitor, but the failure mode changed with the 1.15.0 → 1.16.0 upgrade, and is worse, not better:

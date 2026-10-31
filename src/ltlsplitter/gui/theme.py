@@ -278,18 +278,21 @@ def compact(button: QPushButton) -> QPushButton:
     return button
 
 
-def _build_app_icon() -> QIcon:
-    """Draws a small icon in-process (a branch splitting one node into two, the app's core
+def _build_app_icon(size: int = 64) -> QIcon:
+    """Draws the icon in-process (a branch splitting one node into two, the app's core
     operation) rather than shipping a separate image asset -- avoids a packaging/data-file
-    dependency for something this simple. Always drawn with the light palette's colors: it's a
-    fixed brand mark (shown in the taskbar/title bar), not page content, so it doesn't need to
-    follow the active theme."""
-    size = 64
+    dependency for something this simple. `size` lets a caller render natively at a larger
+    size (e.g. a desktop-launcher icon file) instead of upscaling the small in-app version,
+    which would look soft -- the painter.scale() below keeps every coordinate below written
+    for the original 64px design regardless of the requested size. Always drawn with the
+    light palette's colors: it's a fixed brand mark (shown in the taskbar/title bar), not
+    page content, so it doesn't need to follow the active theme."""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.scale(size / 64, size / 64)
 
     painter.setBrush(QColor(LIGHT.accent))
     painter.setPen(Qt.PenStyle.NoPen)

@@ -32,8 +32,12 @@ class ProjectState:
     generated_monitor_path: str = ""
 
     def active_sub_formulas(self) -> list[SubFormula]:
-        """What pages 2-4 operate on: the accepted decomposition if there is one, otherwise
-        a single sub-formula standing in for the unmodified original requirement."""
+        """What pages 2-4 operate on, in priority order: (1) a split just accepted in this
+        session, (2) an already-saved split's children -- looked up by `parent_reqid`, so
+        re-selecting a previously-split requirement (even after reloading the import, or
+        without ever re-running the split in this session) still finds its real sub-formulas
+        instead of looking "not split" -- or (3), if neither applies, a single sub-formula
+        standing in for the unmodified original requirement."""
         if self.split_accepted and self.sub_formulas:
             return self.sub_formulas
         if self.fret_import is None or self.selected_requirement_id is None:
@@ -41,4 +45,7 @@ class ProjectState:
         req = self.fret_import.requirement(self.selected_requirement_id)
         if req is None:
             return []
+        children = [r for r in self.fret_import.requirements if r.parent_reqid == req.reqid]
+        if children:
+            return [SubFormula(id=c.reqid, pt_formula=c.pt_formula, ft_formula=c.ft_formula) for c in children]
         return [SubFormula(id=req.reqid, pt_formula=req.pt_formula, ft_formula=req.ft_formula)]

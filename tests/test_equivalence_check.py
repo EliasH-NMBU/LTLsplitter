@@ -5,12 +5,41 @@ from ltlsplitter.core.equivalence_check import (
     _check_tautology_spin,
     _check_tautology_spot,
     _is_trivial_tautology,
+    _substitute_internal_variables,
     _TautologyCheck,
     validate_decomposition,
 )
 from ltlsplitter.core.models import SubFormula, Variable, VariableRole, VariableType
 
 _XY = [Variable(name="x", type=VariableType.BOOL), Variable(name="y", type=VariableType.BOOL)]
+
+
+def test_substitute_internal_variables_replaces_bare_name_with_parenthesized_expression():
+    dgt_3 = Variable(name="dgt_3", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 3")
+    result = _substitute_internal_variables("(G dgt_3) <-> (G (distance > 3))", [dgt_3])
+    assert result == "(G (distance > 3)) <-> (G (distance > 3))"
+
+
+def test_substitute_internal_variables_does_not_touch_unrelated_identifiers():
+    # "dgt_3" must not match inside "dgt_30" or similar -- word-boundary matching, not a substring one.
+    dgt_3 = Variable(name="dgt_3", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="x")
+    result = _substitute_internal_variables("dgt_30 & dgt_3", [dgt_3])
+    assert result == "dgt_30 & (x)"
+
+
+def test_substitute_internal_variables_leaves_formula_unchanged_with_no_internal_variables():
+    a = Variable(name="a", type=VariableType.BOOL, role=VariableRole.INPUT)
+    formula = "(G (a -> a))"
+    assert _substitute_internal_variables(formula, [a]) == formula
+
+
+def test_substitute_internal_variables_handles_a_chain_of_internal_variables():
+    # Not confirmed in any real FRET export, but not ruled out: an Internal variable defined in
+    # terms of another Internal variable.
+    base = Variable(name="dgt_3", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 3")
+    derived = Variable(name="far", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="dgt_3 & other")
+    result = _substitute_internal_variables("far", [base, derived])
+    assert result == "((distance > 3) & other)"
 
 
 def test_is_trivial_tautology_detects_identical_sides():
@@ -103,6 +132,34 @@ def test_spot_handles_typed_comparisons_via_quoting():
     result = _check_tautology_spot("(G (state = 1)) <-> (G (state = 1))", state)
     assert result.status == "tautology"
     result = _check_tautology_spot("(G (state = 1)) <-> (G (state = 2))", state)
+    assert result.status == "not_tautology"
+
+
+@requires_spot
+def test_spot_substitutes_internal_variable():
+    # Regression test: neither Spot nor SPIN have a model/DEFINE concept of their own, so
+    # without substituting an Internal variable's defining expression first, both treated it as
+    # an *independent* free proposition, decoupled from the real variable it's derived from --
+    # confirmed by hand this produced a false "not tautology" for exactly this case, which
+    # nuXmv's DEFINE-based substitution (test_nuxmv_substitutes_internal_variable_via_define)
+    # already got right.
+    distance = Variable(name="distance", type=VariableType.INT, role=VariableRole.INPUT)
+    dgt_3 = Variable(name="dgt_3", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 3")
+    result = _check_tautology_spot("(G dgt_3) <-> (G (distance > 3))", [distance, dgt_3])
+    assert result.status == "tautology"
+    # dgt_3 means "distance > 3", not "distance > 5" -- the fix must not make every comparison
+    # involving dgt_3 trivially pass.
+    result = _check_tautology_spot("(G dgt_3) <-> (G (distance > 5))", [distance, dgt_3])
+    assert result.status == "not_tautology"
+
+
+@requires_spin
+def test_spin_substitutes_internal_variable():
+    distance = Variable(name="distance", type=VariableType.INT, role=VariableRole.INPUT)
+    dgt_3 = Variable(name="dgt_3", type=VariableType.BOOL, role=VariableRole.INTERNAL, assignment="distance > 3")
+    result = _check_tautology_spin("(G dgt_3) <-> (G (distance > 3))", [distance, dgt_3])
+    assert result.status == "tautology"
+    result = _check_tautology_spin("(G dgt_3) <-> (G (distance > 5))", [distance, dgt_3])
     assert result.status == "not_tautology"
 
 

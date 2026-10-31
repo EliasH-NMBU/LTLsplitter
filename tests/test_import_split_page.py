@@ -388,6 +388,13 @@ def test_accept_saves_split_as_new_file_nested_under_parent(qtbot, monkeypatch, 
     original = json.loads(open(source_path).read())
     assert len(original["requirements"]) == 1
 
+    # Regression test: _save_split's own success path re-selects the parent requirement,
+    # which resets state.sub_formulas/split_accepted via the ordinary "user picked a
+    # different requirement" handler -- a split that was JUST successfully saved must still
+    # be found (via parent_reqid, now that it's a real persisted requirement) rather than
+    # stage 2 reporting "not split" for a split that, in fact, was saved.
+    assert [s.id for s in state.active_sub_formulas()] == ["r1.1", "r1.2"]
+
 
 def test_accept_skips_save_when_dialog_cancelled(qtbot, monkeypatch, tmp_path):
     source_path = _write_fret_file(tmp_path)
