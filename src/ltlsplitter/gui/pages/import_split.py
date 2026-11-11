@@ -95,8 +95,15 @@ class ImportSplitPage(WizardPage):
         clear_all_button = QPushButton("Clear All")
         clear_all_button.setToolTip("Mark every requirement as a system guarantee (not an assumption).")
         clear_all_button.clicked.connect(lambda: self._set_all_assumptions(False))
+        delete_button = QPushButton("Delete")
+        delete_button.setToolTip(
+            "Delete the selected requirement from this session -- if it's a split's parent, "
+            "its sub-formulas are deleted with it."
+        )
+        delete_button.clicked.connect(self._on_delete_clicked)
         assumption_actions_row.addWidget(select_all_button)
         assumption_actions_row.addWidget(clear_all_button)
+        assumption_actions_row.addWidget(delete_button)
         assumption_actions_row.addStretch()
         left.addLayout(assumption_actions_row)
 
@@ -260,6 +267,54 @@ class ImportSplitPage(WizardPage):
             return
         for req in self.state.fret_import.requirements:
             req.is_assumption = value
+        self._refresh_requirement_tree()
+
+    def _on_delete_clicked(self) -> None:
+        if not self.state.fret_import:
+            return
+        req = self._selected_requirement()
+        if req is None:
+            QMessageBox.information(self, "Nothing selected", "Select a requirement in the tree first.")
+            return
+
+        # Cascade: deleting a parent also removes every (possibly nested) child under it --
+        # an orphaned sub-formula with a dangling parent_reqid would be meaningless downstream
+        # (leaf_requirements(), the tree, everything assumes parent_reqid always resolves).
+        to_delete = {req.reqid}
+        changed = True
+        while changed:
+            changed = False
+            for r in self.state.fret_import.requirements:
+                if r.parent_reqid in to_delete and r.reqid not in to_delete:
+                    to_delete.add(r.reqid)
+                    changed = True
+
+        if len(to_delete) > 1:
+            message = f"Delete {req.reqid} and its {len(to_delete) - 1} sub-formula(s)?"
+        else:
+            message = f"Delete {req.reqid}?"
+        message += "\n\nThis only affects the current session -- nothing is written to disk until you save or export again."
+
+        confirm = QMessageBox.question(
+            self, "Delete requirement", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        self.state.fret_import.requirements = [
+            r for r in self.state.fret_import.requirements if r.reqid not in to_delete
+        ]
+
+        if self.state.selected_requirement_id in to_delete:
+            self.state.selected_requirement_id = None
+            self.state.split_suggestion = None
+            self.state.split_accepted = False
+            self.state.sub_formulas = []
+            self.state.validation = None
+            self.suggestion_label.clear()
+            self.force_split_button.setVisible(False)
+
         self._refresh_requirement_tree()
 
     def _on_requirement_selected(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:

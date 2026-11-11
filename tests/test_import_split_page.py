@@ -348,6 +348,74 @@ def test_clear_all_marks_every_requirement_as_not_assumption(qtbot):
     assert state.fret_import.requirement("r2").is_assumption is False
 
 
+def test_delete_removes_a_leaf_requirement(qtbot, monkeypatch):
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    _select(page, "r1")
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+    page._on_delete_clicked()
+
+    assert state.fret_import.requirement("r1") is None
+    assert state.fret_import.requirement("r2") is not None
+    assert page.requirement_tree.topLevelItemCount() == 1
+    assert state.selected_requirement_id is None
+
+
+def test_delete_cascades_to_a_split_group(qtbot, monkeypatch):
+    fret_import = FretImport(
+        project="demo",
+        requirements=[
+            FretRequirement(reqid="r1", fulltext="...", pt_formula="(H (a & b))", ft_formula="(G (a & b))"),
+            FretRequirement(reqid="r1.1", fulltext="...", pt_formula="(H a)", ft_formula="(G a)", parent_reqid="r1"),
+            FretRequirement(reqid="r1.2", fulltext="...", pt_formula="(H b)", ft_formula="(G b)", parent_reqid="r1"),
+            FretRequirement(reqid="r2", fulltext="...", pt_formula="(H c)", ft_formula="(G c)"),
+        ],
+        variables=[Variable(name="a", type=VariableType.BOOL), Variable(name="b", type=VariableType.BOOL)],
+    )
+    state = ProjectState(fret_import=fret_import)
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    _select(page, "r1")
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+    page._on_delete_clicked()
+
+    assert [r.reqid for r in state.fret_import.requirements] == ["r2"]
+    assert page.requirement_tree.topLevelItemCount() == 1
+
+
+def test_delete_is_a_no_op_when_the_user_cancels_the_confirmation(qtbot, monkeypatch):
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    _select(page, "r1")
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.No)
+    page._on_delete_clicked()
+
+    assert state.fret_import.requirement("r1") is not None
+    assert state.fret_import.requirement("r2") is not None
+
+
+def test_delete_without_a_selection_shows_a_message(qtbot, monkeypatch):
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    calls = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: calls.append(a))
+    page._on_delete_clicked()
+
+    assert len(calls) == 1
+    assert len(state.fret_import.requirements) == 2
+
+
 # -- save-as-new-file flow (real temp files, QInputDialog mocked to avoid a real modal) -------
 
 
