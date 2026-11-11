@@ -42,6 +42,35 @@ def test_extract_typed_comparisons_handles_empty_typed_names():
     assert leftover == []
 
 
+def test_extract_typed_comparisons_finds_a_variable_to_variable_comparison():
+    formula = "(y = mode) -> f"
+    comparisons, leftover = extract_typed_comparisons(formula, {"mode", "y"})
+
+    assert comparisons == [TypedComparison(text="y = mode", variable="y", other_variable="mode")]
+    assert leftover == []
+
+
+def test_extract_typed_comparisons_still_reports_leftover_when_only_one_side_is_typed():
+    # "y" isn't in typed_variable_names here, so "y = mode" doesn't match either shape --
+    # "mode" is left referenced outside any matched comparison.
+    formula = "(y = mode) -> f"
+    comparisons, leftover = extract_typed_comparisons(formula, {"mode"})
+
+    assert comparisons == []
+    assert leftover == ["mode"]
+
+
+def test_extract_typed_comparisons_handles_a_chain_of_variable_to_variable_comparisons():
+    formula = "(y = mode) & (mode = z)"
+    comparisons, leftover = extract_typed_comparisons(formula, {"mode", "y", "z"})
+
+    assert comparisons == [
+        TypedComparison(text="y = mode", variable="y", other_variable="mode"),
+        TypedComparison(text="mode = z", variable="mode", other_variable="z"),
+    ]
+    assert leftover == []
+
+
 def test_extract_typed_comparisons_supports_relational_operators():
     formula = "(distance != 0) & (distance <= 5) & (distance >= 1) & (distance < 10) & (distance > 2)"
     comparisons, leftover = extract_typed_comparisons(formula, {"distance"})

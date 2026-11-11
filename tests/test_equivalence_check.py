@@ -136,6 +136,22 @@ def test_spot_handles_typed_comparisons_via_quoting():
 
 
 @requires_spot
+def test_spot_handles_variable_to_variable_comparisons_via_quoting():
+    # Regression test: "y = mode" (both sides typed variables, not "variable OP literal") used
+    # to be left out of extract_typed_comparisons's match entirely, so both "y" and "mode"
+    # leaked through as unmatched leftover tokens and the check errored out -- confirmed by hand
+    # nuXmv passes this exact case already (it models typed variables natively), so Spot
+    # erroring on it was a real, avoidable gap, not a fundamental limitation.
+    mode = Variable(name="mode", type=VariableType.INT)
+    y = Variable(name="y", type=VariableType.INT)
+    result = _check_tautology_spot("(G (y = mode)) <-> (G (y = mode))", [mode, y])
+    assert result.status == "tautology"
+    f = Variable(name="f", type=VariableType.BOOL)
+    result = _check_tautology_spot("(G (y = mode)) <-> (G ((y = mode) & (F f)))", [mode, y, f])
+    assert result.status == "not_tautology"
+
+
+@requires_spot
 def test_spot_substitutes_internal_variable():
     # Regression test: neither Spot nor SPIN have a model/DEFINE concept of their own, so
     # without substituting an Internal variable's defining expression first, both treated it as
@@ -183,6 +199,30 @@ def test_spin_handles_typed_comparisons_with_a_properly_ranged_domain():
     # regardless, silently collapsing a typed variable's real range.
     state = [Variable(name="state", type=VariableType.INT)]
     result = _check_tautology_spin("(G (state = 1)) <-> (G (state = 2))", state)
+    assert result.status == "not_tautology"
+
+
+@requires_spin
+def test_spin_handles_variable_to_variable_comparisons_with_a_widened_domain():
+    # Regression test: "y = mode" (both sides typed, not "variable OP literal") used to be
+    # rejected outright as an unsupported shape. Fixed via `_promela_model` widening each
+    # linked variable's domain to include the values the OTHER side is known to take (e.g. "y"
+    # here gets mode's {0,1,2} too, not just its own, otherwise narrower side) -- confirmed by
+    # hand that without the widening, SPIN's search can stay too narrow to ever find a real
+    # counterexample, which would have made the non-tautology case below silently misreport
+    # "tautology" instead.
+    mode = Variable(name="mode", type=VariableType.INT)
+    y = Variable(name="y", type=VariableType.INT)
+    f = Variable(name="f", type=VariableType.BOOL)
+    formula_with_mode_domain = "(G (y = mode)) <-> (G (y = mode))"
+    result = _check_tautology_spin(formula_with_mode_domain, [mode, y])
+    assert result.status == "tautology"
+
+    result = _check_tautology_spin(
+        "(G ((y = mode) & ((mode = 0) | (mode = 1) | (mode = 2)))) <-> "
+        "(G (((y = mode) & (F f)) & ((mode = 0) | (mode = 1) | (mode = 2))))",
+        [mode, y, f],
+    )
     assert result.status == "not_tautology"
 
 

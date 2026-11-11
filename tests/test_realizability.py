@@ -129,6 +129,20 @@ def test_check_realizability_typed_flags_not_realizable_results_as_a_possible_ab
 
 
 @requires_strix
+def test_check_realizability_typed_handles_a_variable_to_variable_comparison():
+    # Regression test: "y = mode" (both sides typed, not "variable OP literal") used to be
+    # rejected outright as an unsupported shape. The fresh atom is bucketed as OUTPUT when
+    # either side is OUTPUT-role (here "y"), since the system then has at least partial
+    # influence over the comparison -- same approximation already made for a single OUTPUT-role
+    # variable, just extended to this shape, so the system can trivially satisfy it (same
+    # direction of optimism as the existing single-variable case, not a new one).
+    mode = Variable(name="mode", type=VariableType.INT, role=VariableRole.INPUT)
+    y = Variable(name="y", type=VariableType.INT, role=VariableRole.OUTPUT)
+    result = check_realizability_typed("G (y = mode)", [mode, y], "r1")
+    assert result.realizable is True
+
+
+@requires_strix
 def test_check_realizability_typed_flags_the_caveat_for_bare_internal_variable_references_too():
     # Regression test: a requirement can reference an Internal variable directly (e.g. "far"),
     # with no "variable OP literal" text anywhere in the formula -- the caveat above only fired

@@ -195,23 +195,32 @@ _STRIX_OP_WORDS = {"!=": "ne", "<=": "le", ">=": "ge", "=": "eq", "<": "lt", ">"
 
 def _sanitize_comparison_identifier(comparison: TypedComparison) -> str:
     """Turns a comparison like "classifier = 1" into a fresh, valid bare identifier
-    ("_classifier_eq_1") Strix can accept as an atomic proposition. Checks ops longest-first so
-    "!="/"<="/">=" aren't mistaken for containing "="/"<"/">"."""
+    ("_classifier_eq_1"), or "y = mode" into "_y_eq_mode", that Strix can accept as an atomic
+    proposition. Checks ops longest-first so "!="/"<="/">=" aren't mistaken for containing
+    "="/"<"/">"."""
     for op in sorted(_STRIX_OP_WORDS, key=len, reverse=True):
         if op in comparison.text:
+            if comparison.other_variable is not None:
+                return f"_{comparison.variable}_{_STRIX_OP_WORDS[op]}_{comparison.other_variable}"
             literal = comparison.text.split(op, 1)[1].strip().replace(".", "_").replace("-", "neg")
             return f"_{comparison.variable}_{_STRIX_OP_WORDS[op]}_{literal}"
     return "_" + re.sub(r"\W+", "_", comparison.text.strip())
 
 
 def check_realizability_typed(formula: str, variables: list[Variable], requirement_id: str) -> RealizabilityResult:
-    """Like `check_realizability`, but first abstracts any "variable OP literal" comparisons
-    into fresh boolean propositions so Strix -- which only accepts bare-identifier atomic
-    propositions, confirmed empirically it crashes outright on a double-quoted one (unlike
-    Spot, which accepts that as a native opaque-proposition syntax) -- can check formulas built
-    from typed FRET variables. Reuses the same `extract_typed_comparisons` shared helper
-    `equivalence_check.py` uses for Spot/SPIN, just with fresh-name substitution standing in for
-    Spot's native quoting.
+    """Like `check_realizability`, but first abstracts any "variable OP literal" or
+    "variable OP variable" comparison into a fresh boolean proposition so Strix -- which only
+    accepts bare-identifier atomic propositions, confirmed empirically it crashes outright on a
+    double-quoted one (unlike Spot, which accepts that as a native opaque-proposition syntax) --
+    can check formulas built from typed FRET variables. Reuses the same
+    `extract_typed_comparisons` shared helper `equivalence_check.py` uses for Spot/SPIN, just
+    with fresh-name substitution standing in for Spot's native quoting.
+
+    A "variable OP variable" comparison (e.g. "y = mode") is bucketed as an OUTPUT proposition
+    (the system gets to pick its value freely each step, same approximation already made for a
+    single OUTPUT-role variable below) if EITHER side is OUTPUT-role, since the system then has
+    at least partial influence over the comparison's truth -- otherwise it's bucketed as INPUT,
+    same as a comparison against a literal.
 
     `Internal`-role variables are bucketed into the input side by default: every Internal
     variable in this project's real FRET data so far is derived purely from Input variables
@@ -229,7 +238,8 @@ def check_realizability_typed(formula: str, variables: list[Variable], requireme
         return RealizabilityResult(
             realizable=False,
             details="Strix only supports purely-boolean atomic propositions or simple \"variable "
-            f"OP literal\" comparisons -- couldn't handle: {', '.join(leftover)}.",
+            "OP literal\"/\"variable OP variable\" comparisons -- couldn't handle: "
+            f"{', '.join(leftover)}.",
         )
 
     role_by_name = {v.name: v.role for v in variables}
@@ -239,7 +249,10 @@ def check_realizability_typed(formula: str, variables: list[Variable], requireme
     for comparison in comparisons:
         fresh_name = _sanitize_comparison_identifier(comparison)
         renamed_formula = renamed_formula.replace(comparison.text, fresh_name)
-        if role_by_name.get(comparison.variable) == VariableRole.OUTPUT:
+        involved_roles = {role_by_name.get(comparison.variable)}
+        if comparison.other_variable is not None:
+            involved_roles.add(role_by_name.get(comparison.other_variable))
+        if VariableRole.OUTPUT in involved_roles:
             extra_outputs.append(fresh_name)
         else:
             extra_inputs.append(fresh_name)

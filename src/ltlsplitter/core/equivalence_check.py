@@ -213,7 +213,8 @@ def _check_tautology_spot(formula: str, variables: list[Variable]) -> _Tautology
         return _TautologyCheck(
             "error",
             "Spot only supports purely-boolean atomic propositions or simple \"variable OP "
-            f"literal\" comparisons -- couldn't handle: {', '.join(leftover)}.",
+            "literal\"/\"variable OP variable\" comparisons -- couldn't handle: "
+            f"{', '.join(leftover)}.",
         )
     quoted_formula = formula
     for comparison in comparisons:
@@ -297,13 +298,39 @@ def _promela_model(formula: str, variables: list[Variable], start_first: bool) -
     referenced = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", formula))
     free_vars = [v for v in variables if v.name in referenced]
 
+    typed_names = {v.name for v in free_vars if v.type != VariableType.BOOL}
+    comparisons, _ = extract_typed_comparisons(formula, typed_names)
+
+    literal_values_by_var: dict[str, set[str]] = {name: set() for name in typed_names}
+    links: dict[str, set[str]] = {name: set() for name in typed_names}
+    for comparison in comparisons:
+        if comparison.other_variable is None:
+            literal = re.search(r"-?\d+(?:\.\d+)?$", comparison.text).group(0)
+            literal_values_by_var[comparison.variable].add(literal)
+        else:
+            links[comparison.variable].add(comparison.other_variable)
+            links[comparison.other_variable].add(comparison.variable)
+
+    # Two typed variables compared directly to each other ("y = mode", not "mode = 0") must
+    # each explore every value the OTHER side is known to take too -- otherwise one side's
+    # domain can stay too narrow to ever reach the values needed to test the comparison in both
+    # directions, which would make SPIN's search incomplete (risking a false "tautology" from a
+    # missed counterexample) rather than merely imprecise. Propagated to a fixed point since a
+    # chain of comparisons (e.g. "y = mode" and "mode = z") must widen every linked variable
+    # alike, not just the two in any one comparison.
+    changed = True
+    while changed:
+        changed = False
+        for name, linked in links.items():
+            for other in linked:
+                if not literal_values_by_var[other] <= literal_values_by_var[name]:
+                    literal_values_by_var[name] |= literal_values_by_var[other]
+                    changed = True
+
     decl_lines: list[str] = []
     branch_lines: list[str] = []
     for var in free_vars:
-        literal_values = []
-        if var.type != VariableType.BOOL:
-            comparisons, _ = extract_typed_comparisons(formula, {var.name})
-            literal_values = [re.search(r"-?\d+(?:\.\d+)?$", c.text).group(0) for c in comparisons]
+        literal_values = sorted(literal_values_by_var.get(var.name, ()))
         decl, branch = _promela_var_declaration(var, literal_values, start_first)
         decl_lines.append(decl)
         branch_lines.append(f"    {branch}")
@@ -327,7 +354,8 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
         return _TautologyCheck(
             "error",
             "SPIN's free model here only supports purely-boolean atomic propositions or simple "
-            f"\"variable OP literal\" comparisons -- couldn't handle: {', '.join(leftover)}.",
+            "\"variable OP literal\"/\"variable OP variable\" comparisons -- couldn't handle: "
+            f"{', '.join(leftover)}.",
         )
 
     try:
