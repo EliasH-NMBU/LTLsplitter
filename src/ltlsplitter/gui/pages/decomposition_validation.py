@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings
+import html
+
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 from ltlsplitter.core.equivalence_check import validate_decomposition
@@ -8,7 +10,7 @@ from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose
 from ltlsplitter.core.models import FretRequirement, ToolCheckResult
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
-from ltlsplitter.gui.theme import compact, set_status
+from ltlsplitter.gui.theme import compact, theme_manager
 
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
@@ -40,11 +42,13 @@ class DecompositionValidationPage(WizardPage):
         self.content_layout.addWidget(QLabel("Equivalence (conjunction ≡ original):"))
         self.equivalence_label = QLabel()
         self.equivalence_label.setWordWrap(True)
+        self.equivalence_label.setTextFormat(Qt.TextFormat.RichText)
         self.content_layout.addWidget(self.equivalence_label)
 
         self.content_layout.addWidget(QLabel("Non-degeneracy (no sub-formula alone ≡ original):"))
         self.nondegeneracy_label = QLabel()
         self.nondegeneracy_label.setWordWrap(True)
+        self.nondegeneracy_label.setTextFormat(Qt.TextFormat.RichText)
         self.content_layout.addWidget(self.nondegeneracy_label)
 
         retry_row = QVBoxLayout()
@@ -106,11 +110,21 @@ class DecompositionValidationPage(WizardPage):
 
     @staticmethod
     def _format_results(results: list[ToolCheckResult]) -> str:
-        parts = []
+        """Builds one HTML line per tool, each colored by its *own* PASS/FAIL -- coloring the
+        whole block by whether every tool agreed (the previous behavior) hid a passing tool's
+        result in red whenever any other tool in the same block disagreed, e.g. nuXmv correctly
+        proving a tautology Spot/SPIN can't even attempt (see _check_tautology_spot's "couldn't
+        handle" errors) used to render nuXmv's own PASS in the same red as those failures."""
+        palette = theme_manager.palette
+        lines = []
         for r in results:
             verdict = "PASS" if r.passed else "FAIL"
-            parts.append(f"{r.tool}: {verdict}" + (f" -- {r.details}" if r.details and not r.passed else ""))
-        return "\n".join(parts)
+            color = palette.success if r.passed else palette.danger
+            text = f"{html.escape(r.tool)}: {verdict}"
+            if r.details and not r.passed:
+                text += f" -- {html.escape(r.details)}"
+            lines.append(f'<span style="color: {color};">{text}</span>')
+        return "<br>".join(lines)
 
     def _render(self, validation) -> None:
         if validation is None:
@@ -118,25 +132,14 @@ class DecompositionValidationPage(WizardPage):
             self.nondegeneracy_label.setText("")
             return
 
-        set_status(
-            self.equivalence_label,
-            "success" if all(r.passed for r in validation.equivalence) else "danger",
-        )
         self.equivalence_label.setText(self._format_results(validation.equivalence))
 
         if validation.nondegeneracy:
-            lines = []
+            blocks = []
             for sub_id, results in validation.nondegeneracy.items():
-                lines.append(f"{sub_id}:\n" + self._format_results(results))
-            set_status(
-                self.nondegeneracy_label,
-                "success"
-                if all(r.passed for results in validation.nondegeneracy.values() for r in results)
-                else "danger",
-            )
-            self.nondegeneracy_label.setText("\n".join(lines))
+                blocks.append(f"{html.escape(sub_id)}:<br>" + self._format_results(results))
+            self.nondegeneracy_label.setText("<br><br>".join(blocks))
         else:
-            set_status(self.nondegeneracy_label, None)
             self.nondegeneracy_label.setText("(single formula, not split -- nothing to check)")
 
     def _on_validate_clicked(self) -> None:
