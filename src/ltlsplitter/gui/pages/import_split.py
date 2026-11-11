@@ -203,6 +203,7 @@ class ImportSplitPage(WizardPage):
             return
         self.state.fret_import = fret_import
         self.state.fret_import_path = path
+        self.state.session_export_path = ""
         self.state.selected_requirement_id = None
         self.state.split_suggestion = None
         self.state.split_accepted = False
@@ -393,22 +394,31 @@ class ImportSplitPage(WizardPage):
         """Saves the split as a new copy of the FRET file (original untouched), with the
         sub-formulas appended as requirements nested under `parent`, then makes that copy the
         active file going forward so later stages (and future splits) see them as real
-        requirements -- not just in-memory for this one session."""
+        requirements -- not just in-memory for this one session.
+
+        Only the FIRST split of a given import prompts for a file name -- every later split in
+        the same session (tracked via `state.session_export_path`, reset on a fresh import)
+        reuses that same file instead, so splitting several requirements in one sitting
+        accumulates into one file rather than prompting -- and nesting a fresh
+        "ltlsplitter_exports" directory inside the previous one -- every single time."""
         if not self.state.fret_import_path:
             return  # nothing to copy from (shouldn't normally happen -- a split needs an import)
 
-        default_name = f"{parent.reqid}_split"
-        name, ok = QInputDialog.getText(
-            self, "Save split", "File name for the new copy (original file is never modified):", text=default_name,
-        )
-        if not ok or not name.strip():
-            return
-        name = name.strip()
-        if not name.endswith(".json"):
-            name += ".json"
+        if self.state.session_export_path:
+            export_path = Path(self.state.session_export_path)
+        else:
+            default_name = f"{parent.reqid}_split"
+            name, ok = QInputDialog.getText(
+                self, "Save split", "File name for the new copy (original file is never modified):", text=default_name,
+            )
+            if not ok or not name.strip():
+                return
+            name = name.strip()
+            if not name.endswith(".json"):
+                name += ".json"
+            export_dir = Path(self.state.fret_import_path).parent / _EXPORTS_DIR_NAME
+            export_path = export_dir / name
 
-        export_dir = Path(self.state.fret_import_path).parent / _EXPORTS_DIR_NAME
-        export_path = export_dir / name
         declared_names = {v.name for v in self.state.fret_import.variables}
         try:
             append_sub_formulas_and_save(
@@ -422,12 +432,14 @@ class ImportSplitPage(WizardPage):
 
         self.state.fret_import = new_import
         self.state.fret_import_path = str(export_path)
+        self.state.session_export_path = str(export_path)
         self._refresh_requirement_tree()
         self._select_requirement_item(parent.reqid)
         QMessageBox.information(
             self, "Split saved",
             f"Saved a copy with {len(sub_formulas)} new requirement(s) to:\n{export_path}\n\n"
-            "The original FRET file was not modified. This copy is now the active file.",
+            "The original FRET file was not modified. This copy is now the active file -- "
+            "any further splits this session are appended into it too, with no further prompt.",
         )
 
     def _on_accept_clicked(self) -> None:

@@ -1,7 +1,7 @@
 import json
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QInputDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from ltlsplitter.core.fret_import import import_fret_file
 from ltlsplitter.core.models import FretImport, FretRequirement, SplitSuggestion, SubFormula, Variable, VariableType
@@ -462,6 +462,87 @@ def test_accept_saves_split_as_new_file_nested_under_parent(qtbot, monkeypatch, 
     # be found (via parent_reqid, now that it's a real persisted requirement) rather than
     # stage 2 reporting "not split" for a split that, in fact, was saved.
     assert [s.id for s in state.active_sub_formulas()] == ["r1.1", "r1.2"]
+
+
+def test_second_split_in_same_session_reuses_the_first_export_without_prompting(qtbot, monkeypatch, tmp_path):
+    data = {
+        "requirements": [
+            {
+                "reqid": "r1", "fulltext": "...", "project": "demo",
+                "semantics": {"pt": "(H (a -> b))", "ft": "(G (a -> b))", "variables": ["a", "b"]},
+            },
+            {
+                "reqid": "r2", "fulltext": "...", "project": "demo",
+                "semantics": {"pt": "(H (c -> d))", "ft": "(G (c -> d))", "variables": ["c", "d"]},
+            },
+        ],
+        "variables": [
+            {"variable_name": "a", "dataType": "boolean", "idType": "Input"},
+            {"variable_name": "b", "dataType": "boolean", "idType": "Output"},
+            {"variable_name": "c", "dataType": "boolean", "idType": "Input"},
+            {"variable_name": "d", "dataType": "boolean", "idType": "Output"},
+        ],
+    }
+    source_path = tmp_path / "source.json"
+    source_path.write_text(json.dumps(data))
+    state = ProjectState(fret_import=import_fret_file(str(source_path)), fret_import_path=str(source_path))
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.import_split.decompose",
+        lambda parent_id, pt, ft, count, api_key=None, feedback=None: [
+            SubFormula(id=f"{parent_id}.1", pt_formula="(H x)", ft_formula="(G x)"),
+            SubFormula(id=f"{parent_id}.2", pt_formula="(H y)", ft_formula="(G y)"),
+        ],
+    )
+    prompt_calls = []
+    monkeypatch.setattr(
+        QInputDialog, "getText",
+        lambda *a, **kw: (prompt_calls.append(1), ("r1_split", True))[1],
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: None)
+
+    _select(page, "r1")
+    state.split_suggestion = SplitSuggestion(should_split=True, rationale="x", suggested_count=2)
+    page._on_accept_clicked()
+
+    assert len(prompt_calls) == 1
+    first_export_path = state.fret_import_path
+    assert first_export_path == str(tmp_path / "ltlsplitter_exports" / "r1_split.json")
+
+    _select(page, "r2")
+    state.split_suggestion = SplitSuggestion(should_split=True, rationale="x", suggested_count=2)
+    page._on_accept_clicked()
+
+    # No second prompt, and it's still the SAME file -- not a second one, and not nested
+    # inside itself (Path(".../ltlsplitter_exports/r1_split.json").parent / "ltlsplitter_exports"
+    # would have been the old, pre-fix behavior's bug).
+    assert len(prompt_calls) == 1
+    assert state.fret_import_path == first_export_path
+    assert state.session_export_path == first_export_path
+
+    reqids = {r.reqid for r in state.fret_import.requirements}
+    assert reqids == {"r1", "r1.1", "r1.2", "r2", "r2.1", "r2.2"}
+    assert state.fret_import.requirement("r2.1").parent_reqid == "r2"
+
+    # the original source file must still be untouched
+    original = json.loads(source_path.read_text())
+    assert len(original["requirements"]) == 2
+
+
+def test_session_export_path_resets_on_a_fresh_import(qtbot, monkeypatch, tmp_path):
+    page = _isolated_page(monkeypatch, tmp_path, state=_state_with_import())
+    qtbot.addWidget(page)
+    page.on_show()
+    page.state.session_export_path = "/some/previous/export.json"
+
+    source_path = _write_fret_file(tmp_path)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **kw: (source_path, ""))
+    page._on_import_clicked()
+
+    assert page.state.session_export_path == ""
 
 
 def test_accept_skips_save_when_dialog_cancelled(qtbot, monkeypatch, tmp_path):

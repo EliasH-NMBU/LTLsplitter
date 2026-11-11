@@ -20,6 +20,13 @@ class ProjectState:
     fret_import_path: str = ""
     """Where fret_import was most recently loaded from -- the base a split's sub-formulas get
     appended to (as a new copy, never overwriting this file) when the user saves a split."""
+    session_export_path: str = ""
+    """Set once the first split of this import is saved -- every later split in the same
+    session (i.e. before a fresh "Import FRET file...") is appended into this same file
+    instead of prompting for a new file name each time, so splitting several requirements in
+    one sitting produces one accumulating file rather than one file per split. Reset to ""
+    on a new import (see ImportSplitPage._on_import_clicked), since that's a different base
+    file with nothing of this session's saved in it yet."""
     selected_requirement_id: str | None = None
     split_suggestion: SplitSuggestion | None = None
     split_accepted: bool = False
