@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -26,11 +28,18 @@ from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.reference_check import find_undeclared_references
 from ltlsplitter.gui.pages.base import WizardPage
 from ltlsplitter.gui.theme import compact, set_status
+from ltlsplitter.gui.worker import run_in_background
 
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
 _API_KEY_SETTING = "anthropic/api_key"
 _EXPORTS_DIR_NAME = "ltlsplitter_exports"
+_FORMULA_VIEW_SETTING = "split/formula_view"
+
+# Which LTL flavour the split page shows: FRET gives every requirement both a past-time and a
+# future-time formula, and showing both side by side makes long formulas hard to read.
+_FORMULA_VIEWS = (("pt", "ptLTL"), ("ft", "ftLTL"), ("both", "Both"))
+_FORMULA_STYLE = "font-family: monospace;"
 
 
 class ImportSplitPage(WizardPage):
@@ -49,6 +58,7 @@ class ImportSplitPage(WizardPage):
 
     def __init__(self, state: ProjectState, parent=None):
         super().__init__(state, parent)
+        self._llm_thread = None
         self._settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
 
         api_key_row = QHBoxLayout()
@@ -116,9 +126,29 @@ class ImportSplitPage(WizardPage):
         body.addLayout(left, 1)
 
         right = QVBoxLayout()
-        right.addWidget(QLabel("Original formula (past-time / future-time):"))
+
+        view_row = QHBoxLayout()
+        view_row.addWidget(QLabel("Show:"))
+        saved_view = self._settings.value(_FORMULA_VIEW_SETTING, "both")
+        self.formula_view = saved_view if saved_view in dict(_FORMULA_VIEWS) else "both"
+        self.formula_view_group = QButtonGroup(self)
+        self.formula_view_buttons: dict[str, QRadioButton] = {}
+        for key, text in _FORMULA_VIEWS:
+            button = QRadioButton(text)
+            button.setChecked(key == self.formula_view)
+            button.toggled.connect(lambda checked, k=key: checked and self._set_formula_view(k))
+            self.formula_view_group.addButton(button)
+            self.formula_view_buttons[key] = button
+            view_row.addWidget(button)
+        view_row.addStretch()
+        right.addLayout(view_row)
+
+        self.formula_heading = QLabel()
+        right.addWidget(self.formula_heading)
         self.formula_label = QLabel()
         self.formula_label.setWordWrap(True)
+        self.formula_label.setStyleSheet(_FORMULA_STYLE)
+        self.formula_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         right.addWidget(self.formula_label)
 
         right.addWidget(QLabel("Referenced variables:"))
@@ -126,9 +156,9 @@ class ImportSplitPage(WizardPage):
         self.variables_label.setWordWrap(True)
         right.addWidget(self.variables_label)
 
-        suggest_button = compact(QPushButton("Suggest Split (LLM)"))
-        suggest_button.clicked.connect(self._on_suggest_clicked)
-        right.addWidget(suggest_button)
+        self.suggest_button = compact(QPushButton("Suggest Split (LLM)"))
+        self.suggest_button.clicked.connect(self._on_suggest_clicked)
+        right.addWidget(self.suggest_button)
 
         self.suggestion_label = QLabel()
         self.suggestion_label.setWordWrap(True)
@@ -150,6 +180,8 @@ class ImportSplitPage(WizardPage):
 
         right.addWidget(QLabel("Sub-formulas (double-click to edit):"))
         self.sub_formula_list = QListWidget()
+        self.sub_formula_list.setStyleSheet(_FORMULA_STYLE)
+        self.sub_formula_list.setWordWrap(True)
         self.sub_formula_list.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.sub_formula_list.itemChanged.connect(self._on_sub_formula_edited)
         right.addWidget(self.sub_formula_list)
@@ -160,6 +192,7 @@ class ImportSplitPage(WizardPage):
 
         body.addLayout(right, 2)
         self.content_layout.addLayout(body)
+        self._update_formula_heading()
 
     # -- import / selection ------------------------------------------------------------
 
@@ -338,9 +371,37 @@ class ImportSplitPage(WizardPage):
             self.variables_label.clear()
             self._refresh_sub_formula_list()
             return
-        self.formula_label.setText(f"pt: {req.pt_formula}\nft: {req.ft_formula}")
+        self.formula_label.setText(self._format_formulas(req.pt_formula, req.ft_formula, multiline=True))
         self.variables_label.setText(", ".join(req.variable_names) or "(none referenced)")
         self._refresh_sub_formula_list()
+
+    # -- ptLTL / ftLTL view -------------------------------------------------------------
+
+    def _set_formula_view(self, view: str) -> None:
+        """Switches the page between showing the past-time formula, the future-time formula,
+        or both. Only the display changes -- every requirement keeps both formulas, and the
+        LLM still sees both."""
+        self.formula_view = view
+        self._settings.setValue(_FORMULA_VIEW_SETTING, view)
+        self.formula_view_buttons[view].setChecked(True)
+        self._update_formula_heading()
+        req = self._selected_requirement()
+        if req is not None:
+            self.formula_label.setText(self._format_formulas(req.pt_formula, req.ft_formula, multiline=True))
+        self._refresh_sub_formula_list()
+
+    def _update_formula_heading(self) -> None:
+        self.formula_heading.setText({
+            "pt": "Original formula (ptLTL, past-time):",
+            "ft": "Original formula (ftLTL, future-time):",
+        }.get(self.formula_view, "Original formula (past-time / future-time):"))
+
+    def _format_formulas(self, pt: str, ft: str, multiline: bool = False) -> str:
+        if self.formula_view == "pt":
+            return pt
+        if self.formula_view == "ft":
+            return ft
+        return f"pt: {pt}\nft: {ft}" if multiline else f"pt: {pt} | ft: {ft}"
 
     # -- split suggestion / decomposition ----------------------------------------------
 
@@ -354,14 +415,38 @@ class ImportSplitPage(WizardPage):
         if req is None:
             QMessageBox.information(self, "No requirement selected", "Import a FRET file and select a requirement first.")
             return
-        try:
-            suggestion = suggest_split(req.pt_formula, req.ft_formula, api_key=self.api_key_edit.text().strip())
-        except MissingAPIKeyError as exc:
-            QMessageBox.information(self, "API key needed", str(exc))
+        api_key = self.api_key_edit.text().strip()
+        self.suggestion_label.setText("Asking the LLM for a split suggestion…")
+        self._run_llm(
+            lambda: suggest_split(req.pt_formula, req.ft_formula, api_key=api_key),
+            lambda suggestion, exc: self._on_suggestion_ready(req, suggestion, exc),
+        )
+
+    def _run_llm(self, fn, on_done) -> None:
+        """Runs an LLM call off the GUI thread (a blocking call there freezes the window and
+        the desktop reports "not responding"). The split buttons and requirement tree are
+        locked meanwhile so the reply can't land on a different requirement than it was asked
+        about. `self._llm_thread` is non-None while a call is in flight."""
+        def _done(result, exc) -> None:
+            self._llm_thread = None
+            on_done(result, exc)
+
+        self._llm_thread = run_in_background(
+            self, fn, _done,
+            busy_widgets=(self.suggest_button, self.accept_button, self.reject_button,
+                          self.force_split_button, self.requirement_tree),
+        )
+
+    def _on_suggestion_ready(self, req, suggestion, exc) -> None:
+        if exc is not None:
+            self.suggestion_label.clear()
+            if isinstance(exc, MissingAPIKeyError):
+                QMessageBox.information(self, "API key needed", str(exc))
+            else:  # surface any Anthropic API/network failure
+                QMessageBox.critical(self, "Suggestion failed", f"Couldn't get a split suggestion: {exc}")
             return
-        except Exception as exc:  # noqa: BLE001 -- surface any Anthropic API/network failure
-            QMessageBox.critical(self, "Suggestion failed", f"Couldn't get a split suggestion: {exc}")
-            return
+        if self.state.selected_requirement_id != req.reqid:
+            return  # selection changed meanwhile -- stale answer
         self.state.split_suggestion = suggestion
         verdict = "Split recommended" if suggestion.should_split else "No split recommended"
         self.suggestion_label.setText(
@@ -374,17 +459,21 @@ class ImportSplitPage(WizardPage):
         if req is None:
             QMessageBox.information(self, "No requirement selected", "Import a FRET file and select a requirement first.")
             return
-        try:
-            sub_formulas = decompose(
-                req.reqid, req.pt_formula, req.ft_formula, count,
-                api_key=self.api_key_edit.text().strip(),
-            )
-        except MissingAPIKeyError as exc:
-            QMessageBox.information(self, "API key needed", str(exc))
+        api_key = self.api_key_edit.text().strip()
+        self._run_llm(
+            lambda: decompose(req.reqid, req.pt_formula, req.ft_formula, count, api_key=api_key),
+            lambda sub_formulas, exc: self._on_decomposition_ready(req, sub_formulas, exc),
+        )
+
+    def _on_decomposition_ready(self, req, sub_formulas, exc) -> None:
+        if exc is not None:
+            if isinstance(exc, MissingAPIKeyError):
+                QMessageBox.information(self, "API key needed", str(exc))
+            else:  # surface any Anthropic API/network failure
+                QMessageBox.critical(self, "Decomposition failed", f"Couldn't decompose the formula: {exc}")
             return
-        except Exception as exc:  # noqa: BLE001 -- surface any Anthropic API/network failure
-            QMessageBox.critical(self, "Decomposition failed", f"Couldn't decompose the formula: {exc}")
-            return
+        if self.state.selected_requirement_id != req.reqid:
+            return  # selection changed meanwhile -- stale answer
         self.state.split_accepted = True
         self.state.sub_formulas = sub_formulas
         self._refresh_sub_formula_list()
@@ -461,7 +550,8 @@ class ImportSplitPage(WizardPage):
         self.sub_formula_list.blockSignals(True)
         self.sub_formula_list.clear()
         for sub in self.state.active_sub_formulas():
-            item = QListWidgetItem(f"{sub.id} | pt: {sub.pt_formula} | ft: {sub.ft_formula}")
+            item = QListWidgetItem(f"{sub.id} | {self._format_formulas(sub.pt_formula, sub.ft_formula)}")
+            item.setToolTip(f"pt: {sub.pt_formula}\nft: {sub.ft_formula}")
             item.setData(Qt.ItemDataRole.UserRole, sub.id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
             self.sub_formula_list.addItem(item)
@@ -469,19 +559,33 @@ class ImportSplitPage(WizardPage):
         self._refresh_reference_check()
 
     def _on_sub_formula_edited(self, item: QListWidgetItem) -> None:
-        """Lets the user hand-correct a sub-formula's pt/ft text in place: "id | pt: ... | ft: ..."."""
+        """Lets the user hand-correct a sub-formula in place. The text is "id | <formula>" when
+        only ptLTL or ftLTL is shown (only that formula is updated, the hidden one is kept), or
+        "id | pt: ... | ft: ..." when both are. The id is split off at the first " | " only, so
+        formulas may themselves contain "|" (FRET's disjunction)."""
         sub_id = item.data(Qt.ItemDataRole.UserRole)
-        text = item.text()
-        try:
-            _id_part, pt_part, ft_part = text.split("|", 2)
-            pt_formula = pt_part.strip().removeprefix("pt:").strip()
-            ft_formula = ft_part.strip().removeprefix("ft:").strip()
-        except ValueError:
+        _id_part, sep, rest = item.text().partition(" | ")
+        if not sep:
             return
         for i, sub in enumerate(self.state.sub_formulas):
-            if sub.id == sub_id:
-                self.state.sub_formulas[i] = SubFormula(id=sub_id, pt_formula=pt_formula, ft_formula=ft_formula)
-                break
+            if sub.id != sub_id:
+                continue
+            pt_formula, ft_formula = sub.pt_formula, sub.ft_formula
+            if self.formula_view == "pt":
+                pt_formula = rest.strip().removeprefix("pt:").strip()
+            elif self.formula_view == "ft":
+                ft_formula = rest.strip().removeprefix("ft:").strip()
+            else:
+                pt_part, sep, ft_part = rest.partition(" | ft:")
+                if not sep:
+                    return
+                pt_formula = pt_part.strip().removeprefix("pt:").strip()
+                ft_formula = ft_part.strip()
+            self.state.sub_formulas[i] = SubFormula(id=sub_id, pt_formula=pt_formula, ft_formula=ft_formula)
+            self.sub_formula_list.blockSignals(True)  # setToolTip would re-emit itemChanged
+            item.setToolTip(f"pt: {pt_formula}\nft: {ft_formula}")
+            self.sub_formula_list.blockSignals(False)
+            break
         self._refresh_reference_check()
 
     def _refresh_reference_check(self) -> None:

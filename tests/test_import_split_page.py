@@ -9,6 +9,11 @@ from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.import_split import ImportSplitPage
 
 
+def _wait_for_llm(qtbot, page) -> None:
+    """LLM calls run on a worker thread; block until the reply has been handled."""
+    qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
+
+
 def _state_with_import() -> ProjectState:
     """No fret_import_path -- _save_split's guard no-ops on this, so tests using it never hit
     the QInputDialog/file-I/O save flow (that's exercised separately, with a real temp file)."""
@@ -175,6 +180,8 @@ def test_accept_without_suggestion_shows_message(qtbot, monkeypatch):
 
     page._on_accept_clicked()
 
+    _wait_for_llm(qtbot, page)
+
     assert called == [True]
 
 
@@ -190,6 +197,8 @@ def test_suggest_split_populates_suggestion(qtbot, monkeypatch):
     _select(page, "r1")
 
     page._on_suggest_clicked()
+
+    _wait_for_llm(qtbot, page)
 
     assert state.split_suggestion.should_split is True
     assert "two obligations" in page.suggestion_label.text()
@@ -212,6 +221,8 @@ def test_accept_decomposes_and_populates_sub_formulas(qtbot, monkeypatch):
 
     page._on_accept_clicked()
 
+    _wait_for_llm(qtbot, page)
+
     assert state.split_accepted is True
     assert len(state.sub_formulas) == 2
     assert page.sub_formula_list.count() == 2
@@ -232,6 +243,8 @@ def test_force_split_button_hidden_until_llm_recommends_against_splitting(qtbot,
 
     page._on_suggest_clicked()
 
+    _wait_for_llm(qtbot, page)
+
     assert page.force_split_button.isVisible()
 
 
@@ -248,6 +261,8 @@ def test_force_split_button_hidden_when_llm_recommends_splitting(qtbot, monkeypa
     _select(page, "r1")
 
     page._on_suggest_clicked()
+
+    _wait_for_llm(qtbot, page)
 
     assert not page.force_split_button.isVisible()
 
@@ -271,6 +286,8 @@ def test_force_split_requests_a_split_from_the_llm_even_though_none_was_recommen
     state.split_suggestion = SplitSuggestion(should_split=False, rationale="already atomic", suggested_count=1)
 
     page._on_force_split_clicked()
+
+    _wait_for_llm(qtbot, page)
 
     assert captured["count"] == 2
     assert state.split_accepted is True
@@ -440,6 +457,8 @@ def test_accept_saves_split_as_new_file_nested_under_parent(qtbot, monkeypatch, 
 
     page._on_accept_clicked()
 
+    _wait_for_llm(qtbot, page)
+
     export_path = tmp_path / "ltlsplitter_exports" / "r1_split.json"
     assert export_path.is_file()
     assert state.fret_import_path == str(export_path)
@@ -507,6 +526,7 @@ def test_second_split_in_same_session_reuses_the_first_export_without_prompting(
     _select(page, "r1")
     state.split_suggestion = SplitSuggestion(should_split=True, rationale="x", suggested_count=2)
     page._on_accept_clicked()
+    _wait_for_llm(qtbot, page)
 
     assert len(prompt_calls) == 1
     first_export_path = state.fret_import_path
@@ -515,6 +535,7 @@ def test_second_split_in_same_session_reuses_the_first_export_without_prompting(
     _select(page, "r2")
     state.split_suggestion = SplitSuggestion(should_split=True, rationale="x", suggested_count=2)
     page._on_accept_clicked()
+    _wait_for_llm(qtbot, page)
 
     # No second prompt, and it's still the SAME file -- not a second one, and not nested
     # inside itself (Path(".../ltlsplitter_exports/r1_split.json").parent / "ltlsplitter_exports"
@@ -564,8 +585,115 @@ def test_accept_skips_save_when_dialog_cancelled(qtbot, monkeypatch, tmp_path):
 
     page._on_accept_clicked()
 
+    _wait_for_llm(qtbot, page)
+
     assert state.fret_import_path == source_path
     assert not (tmp_path / "ltlsplitter_exports").exists()
     # the split itself still happened in memory -- only saving was skipped
     assert state.split_accepted is True
     assert len(state.sub_formulas) == 1
+
+
+def test_llm_call_runs_off_the_gui_thread_and_locks_split_controls(qtbot, monkeypatch):
+    """A slow LLM reply must not freeze the window (the desktop's "not responding" prompt)."""
+    import threading
+
+    release = threading.Event()
+
+    def slow_suggest(pt, ft, api_key=None):
+        release.wait(5)
+        return SplitSuggestion(should_split=True, rationale="two obligations", suggested_count=2)
+
+    monkeypatch.setattr("ltlsplitter.gui.pages.import_split.suggest_split", slow_suggest)
+    state = _state_with_import()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    _select(page, "r1")
+
+    page._on_suggest_clicked()  # returns immediately; the reply is still pending
+
+    assert page._llm_thread is not None
+    assert not page.suggest_button.isEnabled()
+    assert not page.requirement_tree.isEnabled()
+
+    release.set()
+    _wait_for_llm(qtbot, page)
+
+    assert page.suggest_button.isEnabled()
+    assert page.requirement_tree.isEnabled()
+    assert "two obligations" in page.suggestion_label.text()
+
+
+# -- ptLTL / ftLTL view -------------------------------------------------------------------
+
+
+def _page_with_two_sub_formulas(qtbot):
+    state = _state_with_import()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    _select(page, "r1")
+    state.split_accepted = True
+    state.sub_formulas = [
+        SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G a)"),
+        SubFormula(id="r1.2", pt_formula="(H b)", ft_formula="(G b)"),
+    ]
+    page._refresh_sub_formula_list()
+    return state, page
+
+
+def test_formula_view_defaults_to_both(qtbot):
+    _state, page = _page_with_two_sub_formulas(qtbot)
+
+    assert page.formula_view == "both"
+    assert "(H (a -> b))" in page.formula_label.text() and "(G (a -> b))" in page.formula_label.text()
+    assert page.sub_formula_list.item(0).text() == "r1.1 | pt: (H a) | ft: (G a)"
+
+
+def test_formula_view_ft_shows_only_future_time(qtbot):
+    _state, page = _page_with_two_sub_formulas(qtbot)
+
+    page.formula_view_buttons["ft"].setChecked(True)
+
+    assert page.formula_label.text() == "(G (a -> b))"
+    assert "ftLTL" in page.formula_heading.text()
+    assert [page.sub_formula_list.item(i).text() for i in range(2)] == ["r1.1 | (G a)", "r1.2 | (G b)"]
+    assert "(H a)" in page.sub_formula_list.item(0).toolTip()  # hidden formula still reachable
+
+
+def test_formula_view_pt_shows_only_past_time(qtbot):
+    _state, page = _page_with_two_sub_formulas(qtbot)
+
+    page.formula_view_buttons["pt"].setChecked(True)
+
+    assert page.formula_label.text() == "(H (a -> b))"
+    assert page.sub_formula_list.item(1).text() == "r1.2 | (H b)"
+
+
+def test_formula_view_choice_is_remembered(qtbot):
+    _state, page = _page_with_two_sub_formulas(qtbot)
+    page.formula_view_buttons["ft"].setChecked(True)
+
+    second = ImportSplitPage(_state_with_import())
+    qtbot.addWidget(second)
+
+    assert second.formula_view == "ft"
+    assert second.formula_view_buttons["ft"].isChecked()
+
+
+def test_editing_in_single_view_keeps_the_hidden_formula(qtbot):
+    state, page = _page_with_two_sub_formulas(qtbot)
+    page.formula_view_buttons["ft"].setChecked(True)
+
+    page.sub_formula_list.item(0).setText("r1.1 | (G (a | c))")
+
+    assert state.sub_formulas[0] == SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G (a | c))")
+
+
+def test_editing_in_both_view_allows_disjunction_in_formulas(qtbot):
+    state, page = _page_with_two_sub_formulas(qtbot)
+
+    page.sub_formula_list.item(0).setText("r1.1 | pt: (H (a | c)) | ft: (G (a | c))")
+
+    assert state.sub_formulas[0] == SubFormula(id="r1.1", pt_formula="(H (a | c))", ft_formula="(G (a | c))")
