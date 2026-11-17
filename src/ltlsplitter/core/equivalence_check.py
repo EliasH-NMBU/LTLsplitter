@@ -179,7 +179,10 @@ def _check_tautology_nuxmv(formula: str, variables: list[Variable]) -> _Tautolog
     except ToolNotFoundError as exc:
         return _TautologyCheck("error", str(exc))
 
-    output = _run_nuxmv_check(nuxmv, _nuxmv_model(variables, formula))
+    try:
+        output = _run_nuxmv_check(nuxmv, _nuxmv_model(variables, formula))
+    except subprocess.TimeoutExpired:
+        return _TautologyCheck("error", f"nuXmv timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s.")
     match = _NUXMV_TAUTOLOGY_RE.search(output)
     if not match:
         return _TautologyCheck("error", f"Couldn't parse nuXmv output:\n{output[-1500:]}")
@@ -228,10 +231,13 @@ def _check_tautology_spot(formula: str, variables: list[Variable]) -> _Tautology
     # --equivalent-to takes an inline FORMULA (confirmed against the real binary -- despite most
     # of Spot's other formula-reference options taking a FILENAME, this one doesn't), so
     # formula is a tautology iff it's equivalent to the constant "1" (true).
-    result = subprocess.run(
-        [str(ltlfilt), "--equivalent-to=1", "-f", quoted_formula, "-q"],
-        capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
-    )
+    try:
+        result = subprocess.run(
+            [str(ltlfilt), "--equivalent-to=1", "-f", quoted_formula, "-q"],
+            capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return _TautologyCheck("error", f"ltlfilt timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s.")
 
     if result.returncode not in (0, 1):
         output = (result.stdout + result.stderr).strip()
@@ -365,10 +371,23 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
     if not shutil.which("gcc") and not shutil.which("cc"):
         return _TautologyCheck("error", "SPIN check needs a C compiler (gcc/cc) to build pan.")
 
-    never_claim = subprocess.run(
-        [str(spin), "-f", _to_spin_syntax(f"!({formula})")],
-        capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
-    )
+    # Confirmed by hand, not hypothetical: `spin -f` itself (translating the formula into a
+    # never claim -- no model, no state-space exploration yet) can blow up and never return for
+    # a biconditional between two differently-shaped-but-equivalent formulas (e.g. one big
+    # conjunction on one side, the same conjuncts each separately wrapped in their own "G" on
+    # the other -- exactly what comparing a split's conjunction against the original produces).
+    # Each side alone translates instantly; it's specifically negating their biconditional that
+    # can hit this translator's worst case. Caught here (and around every other spin/pan
+    # subprocess call below) so a timeout becomes just *this tool's* "error" result, the same as
+    # a missing binary -- without this, an uncaught TimeoutExpired propagates out of
+    # validate_decomposition entirely and discards nuXmv/Spot's results too, not just SPIN's.
+    try:
+        never_claim = subprocess.run(
+            [str(spin), "-f", _to_spin_syntax(f"!({formula})")],
+            capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return _TautologyCheck("error", f"spin -f timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s translating the formula to a never claim.")
     if never_claim.returncode != 0 or not never_claim.stdout.strip():
         output = (never_claim.stdout + never_claim.stderr).strip()
         return _TautologyCheck("error", f"Couldn't parse formula with spin -f:\n{output[-1500:]}")
@@ -408,29 +427,38 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
             model_path = tmp_path / "model.pml"
             model_path.write_text(_promela_model(formula, variables, start_first) + "\n" + never_claim_text)
 
-            gen = subprocess.run(
-                [str(spin), "-a", model_path.name],
-                capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS,
-                stdin=subprocess.DEVNULL, cwd=tmp_path,
-            )
+            try:
+                gen = subprocess.run(
+                    [str(spin), "-a", model_path.name],
+                    capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+                    stdin=subprocess.DEVNULL, cwd=tmp_path,
+                )
+            except subprocess.TimeoutExpired:
+                return _TautologyCheck("error", f"spin -a timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s.")
             if gen.returncode != 0:
                 output = (gen.stdout + gen.stderr).strip()
                 return _TautologyCheck("error", f"spin -a failed:\n{output[-1500:]}")
 
-            build = subprocess.run(
-                [compiler, "-O2", "-o", "pan", "pan.c"],
-                capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS,
-                stdin=subprocess.DEVNULL, cwd=tmp_path,
-            )
+            try:
+                build = subprocess.run(
+                    [compiler, "-O2", "-o", "pan", "pan.c"],
+                    capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+                    stdin=subprocess.DEVNULL, cwd=tmp_path,
+                )
+            except subprocess.TimeoutExpired:
+                return _TautologyCheck("error", f"pan.c build timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s.")
             if build.returncode != 0:
                 output = (build.stdout + build.stderr).strip()
                 return _TautologyCheck("error", f"pan.c build failed:\n{output[-1500:]}")
 
-            run = subprocess.run(
-                [str(tmp_path / "pan"), "-a"],
-                capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS,
-                stdin=subprocess.DEVNULL, cwd=tmp_path,
-            )
+            try:
+                run = subprocess.run(
+                    [str(tmp_path / "pan"), "-a"],
+                    capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+                    stdin=subprocess.DEVNULL, cwd=tmp_path,
+                )
+            except subprocess.TimeoutExpired:
+                return _TautologyCheck("error", f"pan state-space search timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s.")
             output = run.stdout + run.stderr
             last_output = output
 

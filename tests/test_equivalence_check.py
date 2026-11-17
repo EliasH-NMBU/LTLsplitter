@@ -1,3 +1,5 @@
+import subprocess
+
 from .conftest import requires_kind2, requires_nuxmv, requires_spin, requires_spot
 
 from ltlsplitter.core.equivalence_check import (
@@ -107,6 +109,42 @@ def test_nuxmv_missing_binary_is_an_error_not_a_logical_result(monkeypatch):
     # ever looking for the binary, which isn't what this test means to exercise.
     result = _check_tautology_nuxmv("(G x) <-> (F x)", _XY)
     assert result.status == "error"
+
+
+def _raise_timeout(*_args, **_kwargs):
+    raise subprocess.TimeoutExpired(cmd="tool", timeout=120)
+
+
+@requires_nuxmv
+def test_nuxmv_timeout_is_an_error_not_an_uncaught_crash(monkeypatch):
+    # Regression test: an uncaught subprocess.TimeoutExpired used to propagate all the way out
+    # of validate_decomposition, discarding Spot/SPIN's already-computed results too, not just
+    # nuXmv's -- confirmed by hand against a real formula shape that makes `spin -f` itself
+    # (translating the formula, before any model-checking) hang for minutes. Mocked here rather
+    # than waiting out a real 120s timeout.
+    monkeypatch.setattr("ltlsplitter.core.equivalence_check.subprocess.run", _raise_timeout)
+    result = _check_tautology_nuxmv("(G x) <-> (F x)", _XY)
+    assert result.status == "error"
+    assert "timed out" in result.details.lower()
+
+
+@requires_spot
+def test_spot_timeout_is_an_error_not_an_uncaught_crash(monkeypatch):
+    monkeypatch.setattr("ltlsplitter.core.equivalence_check.subprocess.run", _raise_timeout)
+    result = _check_tautology_spot("(G x) <-> (F x)", _XY)
+    assert result.status == "error"
+    assert "timed out" in result.details.lower()
+
+
+@requires_spin
+def test_spin_timeout_during_spin_f_is_an_error_not_an_uncaught_crash(monkeypatch):
+    # This is the real case: `spin -f` (the never-claim translation step, before any model or
+    # pan subprocess is even built) is what hung for minutes on the real formula this was found
+    # with -- confirmed by hand, not a synthetic worry.
+    monkeypatch.setattr("ltlsplitter.core.equivalence_check.subprocess.run", _raise_timeout)
+    result = _check_tautology_spin("(G x) <-> (F x)", _XY)
+    assert result.status == "error"
+    assert "timed out" in result.details.lower()
 
 
 @requires_spot
