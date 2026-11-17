@@ -1,0 +1,180 @@
+{
+  "requirements": [
+    {
+      "reqid": "HD01_pure_biconditional",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "e shall hold if and only if a holds.",
+      "semantics": {
+        "pt": "(H (a <-> e))",
+        "ptExpanded": "(H (a <-> e))",
+        "ft": "(G (a <-> e))",
+        "ftExpanded": "(G (a <-> e))",
+        "ftInfAUExpanded": "(G (a <-> e))",
+        "variables": ["a", "e"]
+      }
+    },
+    {
+      "reqid": "HD02_biconditional_with_negation",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "a shall hold if and only if e does not hold.",
+      "semantics": {
+        "pt": "(H (a <-> (! e)))",
+        "ptExpanded": "(H (a <-> (! e)))",
+        "ft": "(G (a <-> (! e)))",
+        "ftExpanded": "(G (a <-> (! e)))",
+        "ftInfAUExpanded": "(G (a <-> (! e)))",
+        "variables": ["a", "e"]
+      }
+    },
+    {
+      "reqid": "HD03_disjunctive_antecedent",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Whenever a or b holds, e shall hold.",
+      "semantics": {
+        "pt": "(H ((a | b) -> e))",
+        "ptExpanded": "(H ((a | b) -> e))",
+        "ft": "(G ((a | b) -> e))",
+        "ftExpanded": "(G ((a | b) -> e))",
+        "ftInfAUExpanded": "(G ((a | b) -> e))",
+        "variables": ["a", "b", "e"]
+      }
+    },
+    {
+      "reqid": "HD04_negated_disjunction",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Neither a nor b shall ever hold.",
+      "semantics": {
+        "pt": "(H (! (a | b)))",
+        "ptExpanded": "(H (! (a | b)))",
+        "ft": "(G (! (a | b)))",
+        "ftExpanded": "(G (! (a | b)))",
+        "ftInfAUExpanded": "(G (! (a | b)))",
+        "variables": ["a", "b"]
+      }
+    },
+    {
+      "reqid": "HD05_triple_disjunctive_antecedent",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Whenever a, b, or c holds, e shall hold.",
+      "semantics": {
+        "pt": "(H (((a | b) | c) -> e))",
+        "ptExpanded": "(H (((a | b) | c) -> e))",
+        "ft": "(G (((a | b) | c) -> e))",
+        "ftExpanded": "(G (((a | b) | c) -> e))",
+        "ftInfAUExpanded": "(G (((a | b) | c) -> e))",
+        "variables": ["a", "b", "c", "e"]
+      }
+    },
+    {
+      "reqid": "HD06_disjunctive_biconditional",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "e shall hold if and only if a or b holds.",
+      "semantics": {
+        "pt": "(H ((a | b) <-> e))",
+        "ptExpanded": "(H ((a | b) <-> e))",
+        "ft": "(G ((a | b) <-> e))",
+        "ftExpanded": "(G ((a | b) <-> e))",
+        "ftInfAUExpanded": "(G ((a | b) <-> e))",
+        "variables": ["a", "b", "e"]
+      }
+    },
+    {
+      "reqid": "HD07_guarded_biconditional",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Whenever d holds, a shall hold if and only if e holds.",
+      "semantics": {
+        "pt": "(H (d -> (a <-> e)))",
+        "ptExpanded": "(H (d -> (a <-> e)))",
+        "ft": "(G (d -> (a <-> e)))",
+        "ftExpanded": "(G (d -> (a <-> e)))",
+        "ftInfAUExpanded": "(G (d -> (a <-> e)))",
+        "variables": ["a", "d", "e"]
+      }
+    },
+    {
+      "reqid": "HD08_typed_biconditional",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "e shall hold if and only if mode equals 0.",
+      "semantics": {
+        "pt": "(H ((mode = 0) <-> e))",
+        "ptExpanded": "(H ((mode = 0) <-> e))",
+        "ft": "(G ((mode = 0) <-> e))",
+        "ftExpanded": "(G ((mode = 0) <-> e))",
+        "ftInfAUExpanded": "(G ((mode = 0) <-> e))",
+        "variables": ["mode", "e"]
+      }
+    },
+    {
+      "reqid": "HD09_typed_disjunctive_antecedent",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Whenever mode equals 0 or mode equals 1, e shall hold.",
+      "semantics": {
+        "pt": "(H (((mode = 0) | (mode = 1)) -> e))",
+        "ptExpanded": "(H (((mode = 0) | (mode = 1)) -> e))",
+        "ft": "(G (((mode = 0) | (mode = 1)) -> e))",
+        "ftExpanded": "(G (((mode = 0) | (mode = 1)) -> e))",
+        "ftInfAUExpanded": "(G (((mode = 0) | (mode = 1)) -> e))",
+        "variables": ["mode", "e"]
+      }
+    },
+    {
+      "reqid": "HD10_guarded_disjunctive_biconditional",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Whenever d holds, e shall hold if and only if a or b holds.",
+      "semantics": {
+        "pt": "(H (d -> ((a | b) <-> e)))",
+        "ptExpanded": "(H (d -> ((a | b) <-> e)))",
+        "ft": "(G (d -> ((a | b) <-> e)))",
+        "ftExpanded": "(G (d -> ((a | b) <-> e)))",
+        "ftInfAUExpanded": "(G (d -> ((a | b) <-> e)))",
+        "variables": ["a", "b", "d", "e"]
+      }
+    },
+    {
+      "reqid": "HD11_guarded_typed_biconditional",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Whenever d holds, e shall hold if and only if mode equals 0.",
+      "semantics": {
+        "pt": "(H (d -> ((mode = 0) <-> e)))",
+        "ptExpanded": "(H (d -> ((mode = 0) <-> e)))",
+        "ft": "(G (d -> ((mode = 0) <-> e)))",
+        "ftExpanded": "(G (d -> ((mode = 0) <-> e)))",
+        "ftInfAUExpanded": "(G (d -> ((mode = 0) <-> e)))",
+        "variables": ["d", "mode", "e"]
+      }
+    },
+    {
+      "reqid": "HD12_guarded_negated_disjunction",
+      "parent_reqid": "",
+      "project": "SplitterHiddenConjunctionLadder",
+      "fulltext": "Whenever d holds, neither a nor b shall hold.",
+      "semantics": {
+        "pt": "(H (d -> (! (a | b))))",
+        "ptExpanded": "(H (d -> (! (a | b))))",
+        "ft": "(G (d -> (! (a | b))))",
+        "ftExpanded": "(G (d -> (! (a | b))))",
+        "ftInfAUExpanded": "(G (d -> (! (a | b))))",
+        "variables": ["a", "b", "d"]
+      }
+    }
+  ],
+  "variables": [
+    {"variable_name": "a", "dataType": "boolean", "idType": "Input", "project": "SplitterHiddenConjunctionLadder"},
+    {"variable_name": "b", "dataType": "boolean", "idType": "Input", "project": "SplitterHiddenConjunctionLadder"},
+    {"variable_name": "c", "dataType": "boolean", "idType": "Input", "project": "SplitterHiddenConjunctionLadder"},
+    {"variable_name": "d", "dataType": "boolean", "idType": "Input", "project": "SplitterHiddenConjunctionLadder"},
+    {"variable_name": "mode", "dataType": "integer", "idType": "Input", "project": "SplitterHiddenConjunctionLadder"},
+    {"variable_name": "e", "dataType": "boolean", "idType": "Output", "project": "SplitterHiddenConjunctionLadder"}
+  ]
+}
