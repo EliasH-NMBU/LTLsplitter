@@ -241,6 +241,23 @@ def test_spin_handles_typed_comparisons_with_a_properly_ranged_domain():
 
 
 @requires_spin
+def test_spin_handles_xor():
+    # Regression test: spin -f carries "xor" through verbatim into the never claim's guards,
+    # the same way it does with comparisons -- but unlike "=" (rewritten to "=="), nothing
+    # rewrote "xor" into valid Promela (which has no "xor" keyword), so spin -a rejected the
+    # generated model with a syntax error ("near 'xor'") for any formula using a mutual-
+    # exclusivity clause like "(mode = 0) xor (mode = 1)". Fixed by rewriting "xor" to "!="
+    # (the same boolean function for boolean-valued operands) in the never-claim text.
+    mode = Variable(name="mode", type=VariableType.INT, role=VariableRole.INPUT)
+    formula = "(G (((mode = 0) xor (mode = 1)) xor (mode = 2)))"
+    result = _check_tautology_spin(f"{formula} <-> {formula}", [mode])
+    assert result.status == "tautology"
+
+    result = _check_tautology_spin(f"{formula} <-> (G ((mode = 0) xor (mode = 1)))", [mode])
+    assert result.status == "not_tautology"
+
+
+@requires_spin
 def test_spin_handles_variable_to_variable_comparisons_with_a_widened_domain():
     # Regression test: "y = mode" (both sides typed, not "variable OP literal") used to be
     # rejected outright as an unsupported shape. Fixed via `_promela_model` widening each

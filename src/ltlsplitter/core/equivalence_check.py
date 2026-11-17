@@ -406,6 +406,16 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
         promela_text = re.sub(r"(?<![!<>=])=(?!=)", "==", comparison.text)
         never_claim_text = never_claim_text.replace(comparison.text, promela_text)
 
+    # Promela has no "xor" keyword either -- confirmed by hand, not hypothetical: this project's
+    # formula syntax allows "A xor B" as a boolean connective (e.g. mutual-exclusivity clauses
+    # like "(mode = 0) xor (mode = 1)"), and spin -f carries it through verbatim into the never
+    # claim's guards the same way it does with comparisons, so spin -a rejects the resulting
+    # text as a syntax error ("near 'xor'") when compiling it as real Promela source. "A xor B"
+    # and "A != B" are the same boolean function for boolean-valued A/B, which both sides always
+    # are here (xor only ever appears between comparison/boolean sub-expressions in this
+    # project's formulas, never between raw integers), and "!=" is valid Promela.
+    never_claim_text = re.sub(r"\bxor\b", "!=", never_claim_text)
+
     compiler = shutil.which("gcc") or shutil.which("cc")
 
     # Confirmed empirically (reproduced with a real formula from this project's own test
