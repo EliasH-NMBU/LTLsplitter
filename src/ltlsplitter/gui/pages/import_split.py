@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -18,16 +19,17 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QTreeWidget,
     QTreeWidgetItem,
+    QTreeWidgetItemIterator,
     QVBoxLayout,
 )
 
 from ltlsplitter.core.fret_import import InvalidFretFileError, append_sub_formulas_and_save, import_fret_file
 from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose, suggest_split
-from ltlsplitter.core.models import SubFormula
+from ltlsplitter.core.models import FretRequirement, SubFormula
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.reference_check import find_undeclared_references
 from ltlsplitter.gui.pages.base import WizardPage
-from ltlsplitter.gui.theme import compact, set_status
+from ltlsplitter.gui.theme import compact, set_status, theme_manager
 from ltlsplitter.gui.worker import run_in_background
 
 _SETTINGS_ORG = "LTLsplitter"
@@ -59,6 +61,8 @@ class ImportSplitPage(WizardPage):
     def __init__(self, state: ProjectState, parent=None):
         super().__init__(state, parent)
         self._llm_thread = None
+        self._search_queue: list[FretRequirement] = []
+        self._search_busy_widgets: tuple[QPushButton | QTreeWidget, ...] = ()
         self._settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
 
         api_key_row = QHBoxLayout()
@@ -111,9 +115,17 @@ class ImportSplitPage(WizardPage):
             "its sub-formulas are deleted with it."
         )
         delete_button.clicked.connect(self._on_delete_clicked)
+        self.search_button = QPushButton("LTLsplit search")
+        self.search_button.setToolTip(
+            "Asks the LLM about every requirement in the tree and highlights the ones it "
+            "recommends splitting. A highlight clears once that requirement's split is "
+            "accepted or rejected."
+        )
+        self.search_button.clicked.connect(self._on_search_clicked)
         assumption_actions_row.addWidget(select_all_button)
         assumption_actions_row.addWidget(clear_all_button)
         assumption_actions_row.addWidget(delete_button)
+        assumption_actions_row.addWidget(self.search_button)
         assumption_actions_row.addStretch()
         left.addLayout(assumption_actions_row)
 
@@ -238,6 +250,7 @@ class ImportSplitPage(WizardPage):
         self.state.fret_import_path = path
         self.state.session_export_path = ""
         self.state.selected_requirement_id = None
+        self.state.recommended_split_reqids = set()
         self.state.split_suggestion = None
         self.state.split_accepted = False
         self.state.sub_formulas = []
@@ -259,6 +272,7 @@ class ImportSplitPage(WizardPage):
                 item.setToolTip(0, req.fulltext)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(1, Qt.CheckState.Checked if req.is_assumption else Qt.CheckState.Unchecked)
+                self._apply_search_highlight(item)
                 items_by_reqid[req.reqid] = item
             for req in self.state.fret_import.requirements:
                 item = items_by_reqid[req.reqid]
@@ -280,6 +294,24 @@ class ImportSplitPage(WizardPage):
             if item.data(0, Qt.ItemDataRole.UserRole) == reqid:
                 self.requirement_tree.setCurrentItem(item)
                 return
+
+    def _apply_search_highlight(self, item: QTreeWidgetItem) -> None:
+        reqid = item.data(0, Qt.ItemDataRole.UserRole)
+        flagged = reqid in self.state.recommended_split_reqids
+        color = QColor(theme_manager.palette.warning_soft) if flagged else QColor(Qt.GlobalColor.transparent)
+        for column in range(self.requirement_tree.columnCount()):
+            item.setBackground(column, color)
+
+    def _refresh_requirement_tree_highlights(self) -> None:
+        """Re-colors every existing tree item in place from `state.recommended_split_reqids`,
+        without rebuilding the tree (which would lose the current selection/scroll position) --
+        used both after a single accept/reject and, incrementally, during a search batch."""
+        iterator = QTreeWidgetItemIterator(self.requirement_tree)
+        item = iterator.value()
+        while item is not None:
+            self._apply_search_highlight(item)
+            iterator += 1
+            item = iterator.value()
 
     def _on_assumption_toggled(self, item: QTreeWidgetItem, column: int) -> None:
         """Flips `is_assumption` on the underlying requirement in memory -- affects the current
@@ -339,6 +371,7 @@ class ImportSplitPage(WizardPage):
         self.state.fret_import.requirements = [
             r for r in self.state.fret_import.requirements if r.reqid not in to_delete
         ]
+        self.state.recommended_split_reqids -= to_delete
 
         if self.state.selected_requirement_id in to_delete:
             self.state.selected_requirement_id = None
@@ -454,6 +487,66 @@ class ImportSplitPage(WizardPage):
         )
         self.force_split_button.setVisible(not suggestion.should_split)
 
+    # -- "LTLsplit search": asks the LLM about every requirement, one at a time -------------
+
+    def _on_search_clicked(self) -> None:
+        if not self.state.fret_import:
+            QMessageBox.information(self, "Nothing to search", "Import a FRET file first.")
+            return
+        leaves = self.state.fret_import.leaf_requirements()
+        if not leaves:
+            QMessageBox.information(self, "Nothing to search", "No requirements to check.")
+            return
+
+        api_key = self.api_key_edit.text().strip()
+        self._search_queue = list(leaves)
+        self._search_total = len(self._search_queue)
+        # Locked for the whole batch, not just one sub-call -- unlike _run_llm, which only
+        # ever has one call in flight at a time, this chains many; without a self-managed lock
+        # run_in_background would re-enable everything between each pair of calls.
+        self._search_busy_widgets = (
+            self.suggest_button, self.accept_button, self.reject_button, self.force_split_button,
+            self.requirement_tree, self.search_button,
+        )
+        for widget in self._search_busy_widgets:
+            widget.setEnabled(False)
+        self._advance_search(api_key)
+
+    def _advance_search(self, api_key: str) -> None:
+        if not self._search_queue:
+            for widget in self._search_busy_widgets:
+                widget.setEnabled(True)
+            self.search_button.setText("LTLsplit search")
+            self._llm_thread = None  # lets _wait_for_llm-style polling see the whole batch as done
+            return
+        req = self._search_queue.pop(0)
+        done = self._search_total - len(self._search_queue)
+        self.search_button.setText(f"Searching… ({done}/{self._search_total})")
+        self._llm_thread = run_in_background(
+            self,
+            lambda: suggest_split(req.pt_formula, req.ft_formula, api_key=api_key),
+            lambda suggestion, exc: self._on_search_result_ready(req, suggestion, exc, api_key),
+        )
+
+    def _on_search_result_ready(self, req: FretRequirement, suggestion, exc, api_key: str) -> None:
+        if exc is not None:
+            self._search_queue = []
+            for widget in self._search_busy_widgets:
+                widget.setEnabled(True)
+            self.search_button.setText("LTLsplit search")
+            self._llm_thread = None
+            if isinstance(exc, MissingAPIKeyError):
+                QMessageBox.information(self, "API key needed", str(exc))
+            else:  # surface any Anthropic API/network failure
+                QMessageBox.critical(self, "Search stopped", f"Stopped after a failure on {req.reqid}: {exc}")
+            return
+        if suggestion.should_split:
+            self.state.recommended_split_reqids.add(req.reqid)
+        else:
+            self.state.recommended_split_reqids.discard(req.reqid)
+        self._refresh_requirement_tree_highlights()
+        self._advance_search(api_key)
+
     def _decompose_and_populate(self, count: int | None) -> None:
         req = self._selected_requirement()
         if req is None:
@@ -476,6 +569,7 @@ class ImportSplitPage(WizardPage):
             return  # selection changed meanwhile -- stale answer
         self.state.split_accepted = True
         self.state.sub_formulas = sub_formulas
+        self.state.recommended_split_reqids.discard(req.reqid)  # decision made -- stop flagging it
         self._refresh_sub_formula_list()
         self._save_split(req, sub_formulas)
 
@@ -542,8 +636,12 @@ class ImportSplitPage(WizardPage):
         self._decompose_and_populate(None)
 
     def _on_reject_clicked(self) -> None:
+        req = self._selected_requirement()
         self.state.split_accepted = False
         self.state.sub_formulas = []
+        if req is not None:
+            self.state.recommended_split_reqids.discard(req.reqid)  # decision made -- stop flagging it
+            self._refresh_requirement_tree_highlights()
         self._refresh_sub_formula_list()
 
     def _refresh_sub_formula_list(self) -> None:

@@ -24,18 +24,24 @@ class Palette:
     disabled_bg: str
     success: str
     danger: str
+    warning_soft: str
+    """A soft, unobtrusive highlight tint (not a semantic pass/fail color like success/danger)
+    -- used to flag a tree row that needs attention, e.g. a requirement an LLM search
+    recommended splitting, without implying something failed."""
 
 
 LIGHT = Palette(
     background="#f4f5f7", surface="#ffffff", border="#d9dde3", text="#1f2933",
     text_muted="#52606d", accent="#2f6fed", accent_hover="#255ed1", accent_soft="#e8efff",
     disabled_text="#a0a7b2", disabled_bg="#eceef1", success="#1a7f37", danger="#b00020",
+    warning_soft="#fde6c8",
 )
 
 DARK = Palette(
     background="#1b1e23", surface="#242830", border="#3a3f48", text="#e7eaf0",
     text_muted="#9aa4b2", accent="#5b8dfb", accent_hover="#7ea2fc", accent_soft="#28324a",
     disabled_text="#5b6270", disabled_bg="#2a2e36", success="#3fb950", danger="#f85149",
+    warning_soft="#4a3a22",
 )
 
 

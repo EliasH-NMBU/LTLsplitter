@@ -1,12 +1,14 @@
 import json
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from ltlsplitter.core.fret_import import import_fret_file
 from ltlsplitter.core.models import FretImport, FretRequirement, SplitSuggestion, SubFormula, Variable, VariableType
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.import_split import ImportSplitPage
+from ltlsplitter.gui.theme import theme_manager
 
 
 def _wait_for_llm(qtbot, page) -> None:
@@ -28,6 +30,11 @@ def _state_with_import() -> ProjectState:
         variables=[Variable(name="a", type=VariableType.BOOL), Variable(name="b", type=VariableType.BOOL)],
     )
     return ProjectState(fret_import=fret_import)
+
+
+def _tree_item_color(page: ImportSplitPage, reqid: str) -> QColor:
+    items = page.requirement_tree.findItems(reqid, Qt.MatchFlag.MatchRecursive, 0)
+    return items[0].background(0).color()
 
 
 def _write_fret_file(tmp_path, reqid="r1", fulltext="the system shall...") -> str:
@@ -689,6 +696,88 @@ def test_editing_in_single_view_keeps_the_hidden_formula(qtbot):
     page.sub_formula_list.item(0).setText("r1.1 | (G (a | c))")
 
     assert state.sub_formulas[0] == SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G (a | c))")
+
+
+# -- "LTLsplit search" -----------------------------------------------------------------------
+
+
+def test_search_flags_only_requirements_the_llm_recommends_splitting(qtbot, monkeypatch):
+    def fake_suggest_split(pt, ft, api_key=None):
+        return SplitSuggestion(should_split=(pt == "(H a)"), rationale="x", suggested_count=2)
+
+    monkeypatch.setattr("ltlsplitter.gui.pages.import_split.suggest_split", fake_suggest_split)
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    page._on_search_clicked()
+    qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
+
+    assert state.recommended_split_reqids == {"r1"}
+    assert _tree_item_color(page, "r1") == QColor(theme_manager.palette.warning_soft)
+    assert _tree_item_color(page, "r2") == QColor(Qt.GlobalColor.transparent)
+    assert page.search_button.text() == "LTLsplit search"
+    assert page.search_button.isEnabled()
+
+
+def test_accepting_a_split_clears_its_highlight(qtbot, monkeypatch):
+    def fake_decompose(parent_id, pt, ft, count, api_key=None, feedback=None):
+        return [
+            SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G a)"),
+            SubFormula(id="r1.2", pt_formula="(H b)", ft_formula="(G b)"),
+        ]
+
+    monkeypatch.setattr("ltlsplitter.gui.pages.import_split.decompose", fake_decompose)
+    state = _state_with_two_requirements()
+    state.recommended_split_reqids = {"r1", "r2"}
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    _select(page, "r1")
+    state.split_suggestion = SplitSuggestion(should_split=True, rationale="x", suggested_count=2)
+
+    page._on_accept_clicked()
+    qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
+
+    assert state.recommended_split_reqids == {"r2"}  # r1's decision is made, r2's is untouched
+    assert _tree_item_color(page, "r2") == QColor(theme_manager.palette.warning_soft)
+
+
+def test_rejecting_a_split_clears_its_highlight(qtbot):
+    state = _state_with_two_requirements()
+    state.recommended_split_reqids = {"r1", "r2"}
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    _select(page, "r1")
+
+    page._on_reject_clicked()
+
+    assert state.recommended_split_reqids == {"r2"}
+    assert _tree_item_color(page, "r1") == QColor(Qt.GlobalColor.transparent)
+    assert _tree_item_color(page, "r2") == QColor(theme_manager.palette.warning_soft)
+
+
+def test_search_stops_and_reports_missing_api_key(qtbot, monkeypatch):
+    from ltlsplitter.core.llm_decompose import MissingAPIKeyError
+
+    def raise_missing_key(pt, ft, api_key=None):
+        raise MissingAPIKeyError("no key")
+
+    monkeypatch.setattr("ltlsplitter.gui.pages.import_split.suggest_split", raise_missing_key)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: None)
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    page._on_search_clicked()
+    qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
+
+    assert state.recommended_split_reqids == set()
+    assert page.search_button.text() == "LTLsplit search"
+    assert page.search_button.isEnabled()
 
 
 def test_editing_in_both_view_allows_disjunction_in_formulas(qtbot):

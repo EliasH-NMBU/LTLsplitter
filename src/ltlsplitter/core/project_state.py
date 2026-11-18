@@ -28,6 +28,12 @@ class ProjectState:
     on a new import (see ImportSplitPage._on_import_clicked), since that's a different base
     file with nothing of this session's saved in it yet."""
     selected_requirement_id: str | None = None
+    recommended_split_reqids: set[str] = field(default_factory=set)
+    """Populated by "LTLsplit search" (page 1) -- every leaf requirement the LLM recommended
+    splitting, last time it was asked. Kept here (not just local widget state) so it survives
+    whatever else changes the current selection; a reqid is removed the moment that
+    requirement's split is actually accepted or rejected, since the recommendation has then
+    been acted on and showing it as still-pending would be misleading."""
     split_suggestion: SplitSuggestion | None = None
     split_accepted: bool = False
     sub_formulas: list[SubFormula] = field(default_factory=list)
