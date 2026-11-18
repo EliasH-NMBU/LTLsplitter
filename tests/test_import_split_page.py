@@ -289,7 +289,7 @@ def test_force_split_requests_a_split_from_the_llm_even_though_none_was_recommen
 
     _wait_for_llm(qtbot, page)
 
-    assert captured["count"] == 2
+    assert captured["count"] is None  # no fixed target -- the LLM decides how many parts
     assert state.split_accepted is True
     assert len(state.sub_formulas) == 2
 

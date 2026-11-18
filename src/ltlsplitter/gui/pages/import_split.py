@@ -169,7 +169,7 @@ class ImportSplitPage(WizardPage):
         self.accept_button.clicked.connect(self._on_accept_clicked)
         self.reject_button = compact(QPushButton("Reject (keep original)"))
         self.reject_button.clicked.connect(self._on_reject_clicked)
-        self.force_split_button = compact(QPushButton("Force split anyway (ask LLM for 2 parts)"))
+        self.force_split_button = compact(QPushButton("Force Split"))
         self.force_split_button.clicked.connect(self._on_force_split_clicked)
         self.force_split_button.setVisible(False)
         decision_row.addWidget(self.accept_button)
@@ -454,7 +454,7 @@ class ImportSplitPage(WizardPage):
         )
         self.force_split_button.setVisible(not suggestion.should_split)
 
-    def _decompose_and_populate(self, count: int) -> None:
+    def _decompose_and_populate(self, count: int | None) -> None:
         req = self._selected_requirement()
         if req is None:
             QMessageBox.information(self, "No requirement selected", "Import a FRET file and select a requirement first.")
@@ -539,7 +539,7 @@ class ImportSplitPage(WizardPage):
         self._decompose_and_populate(suggestion.suggested_count)
 
     def _on_force_split_clicked(self) -> None:
-        self._decompose_and_populate(2)
+        self._decompose_and_populate(None)
 
     def _on_reject_clicked(self) -> None:
         self.state.split_accepted = False

@@ -37,29 +37,37 @@ _SUGGEST_SYSTEM_PROMPT = (
     "long or deeply nested."
 )
 
-_DECOMPOSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "sub_formulas": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "pt_formula": {"type": "string", "description": "Past-time LTL (H/O/S/Y)."},
-                    "ft_formula": {"type": "string", "description": "Future-time LTL (G/F/X/U)."},
-                },
-                "required": ["pt_formula", "ft_formula"],
-                "additionalProperties": False,
+def _decompose_schema(min_items: int | None) -> dict:
+    sub_formulas_schema = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "pt_formula": {"type": "string", "description": "Past-time LTL (H/O/S/Y)."},
+                "ft_formula": {"type": "string", "description": "Future-time LTL (G/F/X/U)."},
             },
+            "required": ["pt_formula", "ft_formula"],
+            "additionalProperties": False,
         },
-    },
-    "required": ["sub_formulas"],
-    "additionalProperties": False,
-}
+    }
+    if min_items is not None:
+        sub_formulas_schema["minItems"] = min_items
+    return {
+        "type": "object",
+        "properties": {"sub_formulas": sub_formulas_schema},
+        "required": ["sub_formulas"],
+        "additionalProperties": False,
+    }
+
+
+_DECOMPOSE_SCHEMA = _decompose_schema(None)
+_DECOMPOSE_SCHEMA_ANY_COUNT = _decompose_schema(min_items=2)
 
 _DECOMPOSE_SYSTEM_PROMPT = (
-    "You split a single LTL requirement into exactly the requested number of sub-formulas. "
-    "Each sub-formula must be given in BOTH past-time form (H/O/S/Y operators, matching the "
+    "You split a single LTL requirement into sub-formulas -- exactly the requested number when "
+    "one is given, or, when none is given, however many independently-checkable obligations you "
+    "judge the formula naturally contains (at least 2 -- a 'split' into only one part wouldn't be "
+    "one). Each sub-formula must be given in BOTH past-time form (H/O/S/Y operators, matching the "
     "style of the original past-time formula given to you) and future-time form (G/F/X/U "
     "operators, matching the style of the original future-time formula given to you) -- the two "
     "forms of each sub-formula must express the same obligation, just as the original's two "
@@ -108,17 +116,28 @@ def decompose(
     parent_id: str,
     pt_formula: str,
     ft_formula: str,
-    count: int,
+    count: int | None = None,
     api_key: str | None = None,
     feedback: str | None = None,
 ) -> list[SubFormula]:
-    """Asks the LLM to decompose the formula into `count` sub-formulas. `feedback`, when given,
-    carries a prior validation failure's details back to the LLM to correct on retry."""
+    """Asks the LLM to decompose the formula into `count` sub-formulas, or, when `count` is
+    None, into however many sub-formulas the LLM itself judges appropriate (at least 2).
+    `feedback`, when given, carries a prior validation failure's details back to the LLM to
+    correct on retry."""
     client = _client(api_key)
-    prompt = (
-        f"Past-time form: {pt_formula}\nFuture-time form: {ft_formula}\n"
-        f"Split into exactly {count} sub-formula(s)."
-    )
+    if count is None:
+        prompt = (
+            f"Past-time form: {pt_formula}\nFuture-time form: {ft_formula}\n"
+            "Split this into multiple independently-checkable sub-formulas. Decide how many "
+            "sub-formulas are appropriate yourself -- there is no fixed target count."
+        )
+        schema = _DECOMPOSE_SCHEMA_ANY_COUNT
+    else:
+        prompt = (
+            f"Past-time form: {pt_formula}\nFuture-time form: {ft_formula}\n"
+            f"Split into exactly {count} sub-formula(s)."
+        )
+        schema = _DECOMPOSE_SCHEMA
     if feedback:
         prompt += f"\n\nA previous attempt failed validation: {feedback}\nTry again, fixing this."
 
@@ -127,7 +146,7 @@ def decompose(
         max_tokens=4096,
         system=_DECOMPOSE_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": _DECOMPOSE_SCHEMA}},
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
     )
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)
