@@ -1,0 +1,262 @@
+{
+  "requirements": [
+    {
+      "reqid": "AD01_atomic_single_obligation",
+      "parent_reqid": "",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "Whenever a holds, e shall hold.",
+      "semantics": {
+        "pt": "(H (a -> e))",
+        "ptExpanded": "(H (a -> e))",
+        "ft": "(G (a -> e))",
+        "ftExpanded": "(G (a -> e))",
+        "ftInfAUExpanded": "(G (a -> e))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      },
+      "is_assumption": false
+    },
+    {
+      "reqid": "AD02_coupled_output_exclusion",
+      "parent_reqid": "",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "e1 and e2 shall never hold at the same time.",
+      "semantics": {
+        "pt": "(H (! (e1 & e2)))",
+        "ptExpanded": "(H (! (e1 & e2)))",
+        "ft": "(G (! (e1 & e2)))",
+        "ftExpanded": "(G (! (e1 & e2)))",
+        "ftInfAUExpanded": "(G (! (e1 & e2)))",
+        "variables": [
+          "e1",
+          "e2"
+        ]
+      },
+      "is_assumption": false
+    },
+    {
+      "reqid": "AD03_coupled_output_one_hot",
+      "parent_reqid": "",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "Whenever d holds, exactly one of e1, e2, or e3 shall hold.",
+      "semantics": {
+        "pt": "(H (d -> (((e1 & (! e2)) & (! e3)) | (((! e1) & e2) & (! e3)) | (((! e1) & (! e2)) & e3))))",
+        "ptExpanded": "(H (d -> (((e1 & (! e2)) & (! e3)) | (((! e1) & e2) & (! e3)) | (((! e1) & (! e2)) & e3))))",
+        "ft": "(G (d -> (((e1 & (! e2)) & (! e3)) | (((! e1) & e2) & (! e3)) | (((! e1) & (! e2)) & e3))))",
+        "ftExpanded": "(G (d -> (((e1 & (! e2)) & (! e3)) | (((! e1) & e2) & (! e3)) | (((! e1) & (! e2)) & e3))))",
+        "ftInfAUExpanded": "(G (d -> (((e1 & (! e2)) & (! e3)) | (((! e1) & e2) & (! e3)) | (((! e1) & (! e2)) & e3))))",
+        "variables": [
+          "d",
+          "e1",
+          "e2",
+          "e3"
+        ]
+      },
+      "is_assumption": false
+    },
+    {
+      "reqid": "AD04_input_parity_output",
+      "parent_reqid": "",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "e shall hold if and only if an odd number of a, b, and c hold.",
+      "semantics": {
+        "pt": "(H (e <-> (! ((! (a <-> b)) <-> c))))",
+        "ptExpanded": "(H (e <-> (! ((! (a <-> b)) <-> c))))",
+        "ft": "(G (e <-> (! ((! (a <-> b)) <-> c))))",
+        "ftExpanded": "(G (e <-> (! ((! (a <-> b)) <-> c))))",
+        "ftInfAUExpanded": "(G (e <-> (! ((! (a <-> b)) <-> c))))",
+        "variables": [
+          "a",
+          "b",
+          "c",
+          "e"
+        ]
+      },
+      "is_assumption": false
+    },
+    {
+      "reqid": "AD05_past_time_biconditional_shift",
+      "parent_reqid": "",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "e shall hold if and only if a held at the previous timestep.",
+      "semantics": {
+        "pt": "(H ((Y a) <-> e))",
+        "ptExpanded": "(H ((Y a) <-> e))",
+        "ft": "(G ((X e) <-> a))",
+        "ftExpanded": "(G ((X e) <-> a))",
+        "ftInfAUExpanded": "(G ((X e) <-> a))",
+        "variables": [
+          "a",
+          "e"
+        ]
+      },
+      "is_assumption": false
+    },
+    {
+      "reqid": "AD06_typed_variable_mutual_distinctness",
+      "parent_reqid": "",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "Whenever x, y, and z are pairwise distinct, e shall hold.",
+      "semantics": {
+        "pt": "(H ((((x != y) & (y != z)) & (x != z)) -> e))",
+        "ptExpanded": "(H ((((x != y) & (y != z)) & (x != z)) -> e))",
+        "ft": "(G ((((x != y) & (y != z)) & (x != z)) -> e))",
+        "ftExpanded": "(G ((((x != y) & (y != z)) & (x != z)) -> e))",
+        "ftInfAUExpanded": "(G ((((x != y) & (y != z)) & (x != z)) -> e))",
+        "variables": [
+          "x",
+          "y",
+          "z",
+          "e"
+        ]
+      },
+      "is_assumption": false
+    },
+    {
+      "reqid": "AD02_coupled_output_exclusion.1",
+      "parent_reqid": "AD02_coupled_output_exclusion",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "(LLM split of AD02_coupled_output_exclusion) e1 and e2 shall never hold at the same time.",
+      "is_assumption": false,
+      "semantics": {
+        "pt": "(H (e1 -> ! e2))",
+        "ptExpanded": "(H (e1 -> ! e2))",
+        "ft": "(G (e1 -> ! e2))",
+        "ftExpanded": "(G (e1 -> ! e2))",
+        "ftInfAUExpanded": "(G (e1 -> ! e2))",
+        "variables": [
+          "e1",
+          "e2"
+        ]
+      }
+    },
+    {
+      "reqid": "AD02_coupled_output_exclusion.2",
+      "parent_reqid": "AD02_coupled_output_exclusion",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "(LLM split of AD02_coupled_output_exclusion) e1 and e2 shall never hold at the same time.",
+      "is_assumption": false,
+      "semantics": {
+        "pt": "(H (e2 -> ! e1))",
+        "ptExpanded": "(H (e2 -> ! e1))",
+        "ft": "(G (e2 -> ! e1))",
+        "ftExpanded": "(G (e2 -> ! e1))",
+        "ftInfAUExpanded": "(G (e2 -> ! e1))",
+        "variables": [
+          "e1",
+          "e2"
+        ]
+      }
+    },
+    {
+      "reqid": "AD06_typed_variable_mutual_distinctness.1",
+      "parent_reqid": "AD06_typed_variable_mutual_distinctness",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "(LLM split of AD06_typed_variable_mutual_distinctness) Whenever x, y, and z are pairwise distinct, e shall hold.",
+      "is_assumption": false,
+      "semantics": {
+        "pt": "(H (((((x != y) & (y != z)) & (x != z)) & (x < z)) -> e))",
+        "ptExpanded": "(H (((((x != y) & (y != z)) & (x != z)) & (x < z)) -> e))",
+        "ft": "(G (((((x != y) & (y != z)) & (x != z)) & (x < z)) -> e))",
+        "ftExpanded": "(G (((((x != y) & (y != z)) & (x != z)) & (x < z)) -> e))",
+        "ftInfAUExpanded": "(G (((((x != y) & (y != z)) & (x != z)) & (x < z)) -> e))",
+        "variables": [
+          "e",
+          "x",
+          "y",
+          "z"
+        ]
+      }
+    },
+    {
+      "reqid": "AD06_typed_variable_mutual_distinctness.2",
+      "parent_reqid": "AD06_typed_variable_mutual_distinctness",
+      "project": "SplitterAdversarialLadder",
+      "fulltext": "(LLM split of AD06_typed_variable_mutual_distinctness) Whenever x, y, and z are pairwise distinct, e shall hold.",
+      "is_assumption": false,
+      "semantics": {
+        "pt": "(H (((((x != y) & (y != z)) & (x != z)) & !(x < z)) -> e))",
+        "ptExpanded": "(H (((((x != y) & (y != z)) & (x != z)) & !(x < z)) -> e))",
+        "ft": "(G (((((x != y) & (y != z)) & (x != z)) & !(x < z)) -> e))",
+        "ftExpanded": "(G (((((x != y) & (y != z)) & (x != z)) & !(x < z)) -> e))",
+        "ftInfAUExpanded": "(G (((((x != y) & (y != z)) & (x != z)) & !(x < z)) -> e))",
+        "variables": [
+          "e",
+          "x",
+          "y",
+          "z"
+        ]
+      }
+    }
+  ],
+  "variables": [
+    {
+      "variable_name": "a",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "b",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "c",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "d",
+      "dataType": "boolean",
+      "idType": "Input",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "e",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "e1",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "e2",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "e3",
+      "dataType": "boolean",
+      "idType": "Output",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "x",
+      "dataType": "integer",
+      "idType": "Input",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "y",
+      "dataType": "integer",
+      "idType": "Input",
+      "project": "SplitterAdversarialLadder"
+    },
+    {
+      "variable_name": "z",
+      "dataType": "integer",
+      "idType": "Input",
+      "project": "SplitterAdversarialLadder"
+    }
+  ]
+}
