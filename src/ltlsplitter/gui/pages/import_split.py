@@ -28,6 +28,7 @@ from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose, sugges
 from ltlsplitter.core.models import FretRequirement, SubFormula
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.reference_check import find_undeclared_references
+from ltlsplitter.core.smv_import import InvalidSmvFileError, import_smv_file
 from ltlsplitter.gui.pages.base import WizardPage
 from ltlsplitter.gui.theme import compact, set_status, theme_manager
 from ltlsplitter.gui.worker import run_in_background
@@ -47,8 +48,11 @@ _FORMULA_STYLE = "font-family: monospace;"
 class ImportSplitPage(WizardPage):
     title = "1. Import & Split Review"
     description = (
-        "Import a FRET project export, pick one requirement from it, and let an LLM suggest "
-        "whether it should be split into independent sub-properties. Review and accept/reject "
+        "Import a FRET project export, or a plain NuSMV/nuXmv .smv file (VAR declarations plus "
+        "one or more LTLSPEC statements -- each becomes its own requirement, picked up as "
+        "past-time or future-time based on whether it uses any H/O/S/Y/Z operator), pick one "
+        "requirement from it, and let an LLM suggest whether it should be split into "
+        "independent sub-properties. Review and accept/reject "
         "the suggestion, then have the LLM perform the split -- the sub-formulas are editable "
         "before moving on to validation. Accepting a split saves it as a new copy of the FRET "
         "file (the original is never modified) with the sub-formulas appended as requirements "
@@ -90,7 +94,7 @@ class ImportSplitPage(WizardPage):
         self._update_api_key_visibility()
 
         import_row = QHBoxLayout()
-        import_button = QPushButton("Import FRET file...")
+        import_button = QPushButton("Import FRET/SMV file...")
         import_button.clicked.connect(self._on_import_clicked)
         self.import_label = QLabel("(no file imported)")
         import_row.addWidget(import_button)
@@ -238,12 +242,18 @@ class ImportSplitPage(WizardPage):
         self.api_key_change_button.setText("Change" if has_key else "Set API key")
 
     def _on_import_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import FRET project export", "", "JSON files (*.json)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import FRET project export or NuSMV file", "",
+            "FRET export / NuSMV file (*.json *.smv);;FRET export (*.json);;NuSMV file (*.smv);;All files (*)",
+        )
         if not path:
             return
         try:
-            fret_import = import_fret_file(path)
-        except InvalidFretFileError as exc:
+            if path.lower().endswith(".smv"):
+                fret_import = import_smv_file(path)
+            else:
+                fret_import = import_fret_file(path)
+        except (InvalidFretFileError, InvalidSmvFileError) as exc:
             QMessageBox.critical(self, "Import failed", str(exc))
             return
         self.state.fret_import = fret_import

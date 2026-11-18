@@ -560,6 +560,35 @@ def test_second_split_in_same_session_reuses_the_first_export_without_prompting(
     assert len(original["requirements"]) == 2
 
 
+def test_import_dispatches_smv_files_to_the_smv_importer(qtbot, monkeypatch, tmp_path):
+    source_path = tmp_path / "model.smv"
+    source_path.write_text("VAR a : boolean;\nLTLSPEC G a;\n")
+    page = _isolated_page(monkeypatch, tmp_path)
+    qtbot.addWidget(page)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **kw: (str(source_path), ""))
+
+    page._on_import_clicked()
+
+    assert page.state.fret_import is not None
+    assert page.state.fret_import.project == "model"
+    assert page.state.fret_import.requirement("smv_req_1").ft_formula == "G a"
+
+
+def test_import_shows_an_error_for_an_invalid_smv_file(qtbot, monkeypatch, tmp_path):
+    source_path = tmp_path / "not_really.smv"
+    source_path.write_text("this is not NuSMV syntax at all\n")
+    page = _isolated_page(monkeypatch, tmp_path)
+    qtbot.addWidget(page)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **kw: (str(source_path), ""))
+    called = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **kw: called.append(True))
+
+    page._on_import_clicked()
+
+    assert called == [True]
+    assert page.state.fret_import is None
+
+
 def test_session_export_path_resets_on_a_fresh_import(qtbot, monkeypatch, tmp_path):
     page = _isolated_page(monkeypatch, tmp_path, state=_state_with_import())
     qtbot.addWidget(page)
