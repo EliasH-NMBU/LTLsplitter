@@ -1,12 +1,18 @@
 from pathlib import Path
 
-from PySide6.QtWidgets import QInputDialog, QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QInputDialog, QMessageBox, QToolTip
 
 from .conftest import requires_ogma
 
 from ltlsplitter.core.models import FretImport, FretRequirement, Variable, VariableRole, VariableType
 from ltlsplitter.core.project_state import ProjectState
-from ltlsplitter.gui.pages.monitor_export import MonitorExportPage, _UNGROUPED, _sanitize_dirname
+from ltlsplitter.gui.pages.monitor_export import (
+    MonitorExportPage,
+    _UNASSIGNED_REQUIREMENTS,
+    _UNASSIGNED_VARIABLES,
+    _sanitize_dirname,
+)
 
 
 def _req(reqid, pt="(H a)", ft="(G a)", variables=None, parent_reqid="") -> FretRequirement:
@@ -29,7 +35,6 @@ def _state_with_import(fret_import_path: str = "/some/original.json") -> Project
 
 
 def _state_with_three_requirements() -> ProjectState:
-    """r1/r2 share variable "a" (should auto-group together); r3 is unrelated."""
     fret_import = FretImport(
         project="demo",
         requirements=[
@@ -42,12 +47,54 @@ def _state_with_three_requirements() -> ProjectState:
     return ProjectState(fret_import=fret_import, fret_import_path="/some/file.json")
 
 
-def _group_member_texts(page: MonitorExportPage, group_name: str) -> list[str]:
-    for i in range(page.group_tree.topLevelItemCount()):
-        item = page.group_tree.topLevelItem(i)
+def _state_for_auto_sort() -> ProjectState:
+    """r1 only uses "a" (unambiguous), r2 only uses "b" (unambiguous), r3 uses both (ambiguous
+    once a/b are in different groups -- the exact example from the request), r4 uses "z", which
+    is never placed in any group."""
+    fret_import = FretImport(
+        project="demo",
+        requirements=[
+            _req("r1", variables=["a"]),
+            _req("r2", variables=["b"]),
+            _req("r3", variables=["a", "b"]),
+            _req("r4", variables=["z"]),
+        ],
+        variables=[Variable(name=n, type=VariableType.BOOL) for n in ("a", "b", "z")],
+    )
+    return ProjectState(fret_import=fret_import, fret_import_path="/some/file.json")
+
+
+def _variable_member_texts(page: MonitorExportPage, group_name: str) -> list[str]:
+    for i in range(page.variable_tree.topLevelItemCount()):
+        item = page.variable_tree.topLevelItem(i)
         if item.text(0) == group_name:
             return [item.child(j).text(0) for j in range(item.childCount())]
-    raise AssertionError(f"no top-level group named {group_name!r}")
+    raise AssertionError(f"no top-level variable group named {group_name!r}")
+
+
+def _requirement_member_texts(page: MonitorExportPage, group_name: str) -> list[str]:
+    for i in range(page.requirement_tree.topLevelItemCount()):
+        item = page.requirement_tree.topLevelItem(i)
+        if item.text(0) == group_name:
+            return [item.child(j).text(0) for j in range(item.childCount())]
+    raise AssertionError(f"no top-level requirement group named {group_name!r}")
+
+
+def _add_group(page: MonitorExportPage, monkeypatch, name: str) -> None:
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: (name, True))
+    page._on_add_group_clicked()
+
+
+def _move_variable_to_group(page: MonitorExportPage, var_name: str, group_name: str) -> None:
+    """Simulates what dragging a variable leaf into a group produces -- real Qt drag-and-drop
+    isn't simulated here (same precedent the old group_tree tests followed)."""
+    item = page.variable_tree.findItems(var_name, Qt.MatchFlag.MatchRecursive, 0)[0]
+    item.parent().removeChild(item)
+    group_item = next(
+        page.variable_tree.topLevelItem(i) for i in range(page.variable_tree.topLevelItemCount())
+        if page.variable_tree.topLevelItem(i).text(0) == group_name
+    )
+    group_item.addChild(item)
 
 
 def test_generate_without_fret_import_shows_message(qtbot, monkeypatch):
@@ -62,7 +109,6 @@ def test_generate_without_fret_import_shows_message(qtbot, monkeypatch):
 
 
 def test_generate_without_a_group_shows_message(qtbot, monkeypatch):
-    """Only "Ungrouped" exists until the user creates a real group -- nothing is exportable yet."""
     called = []
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
     page = MonitorExportPage(_state_with_import())
@@ -76,12 +122,11 @@ def test_generate_without_a_group_shows_message(qtbot, monkeypatch):
 
 def test_generate_with_empty_group_shows_message(qtbot, monkeypatch):
     called = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
     page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
-    page.group_tree.addTopLevelItem(page._group_header_item("Empty Group", editable=True))
-    page._refresh_export_group_selector()
+    _add_group(page, monkeypatch, "Empty Group")
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
     page.export_group_combo.setCurrentText("Empty Group")
 
     page._on_generate_clicked()
@@ -91,11 +136,14 @@ def test_generate_with_empty_group_shows_message(qtbot, monkeypatch):
 
 def test_generate_without_output_dir_shows_message(qtbot, monkeypatch):
     called = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
     page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
-    page._on_auto_suggest_clicked()
+    _add_group(page, monkeypatch, "Group 1")
+    _move_variable_to_group(page, "request", "Group 1")
+    _move_variable_to_group(page, "grant", "Group 1")
+    page._on_auto_sort_clicked()
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
 
     page._on_generate_clicked()
 
@@ -183,7 +231,7 @@ def test_clearing_a_topic_cell_falls_back_to_the_default(qtbot):
 
 
 def test_revisiting_the_page_preserves_a_topic_override(qtbot):
-    """Same rule as the group tree: an unchanged variable set must not silently discard an
+    """Same rule as the group trees: an unchanged variable set must not silently discard an
     override the user already typed in just because the page was shown again."""
     state = _state_with_import()
     page = MonitorExportPage(state)
@@ -209,9 +257,12 @@ def test_generate_passes_the_overridden_topic_through_to_ogma(qtbot, monkeypatch
     qtbot.addWidget(page)
     page.on_show()
     page.topics_tree.topLevelItem(0).setText(1, "/custom/topic")
-    page._on_auto_suggest_clicked()
+    _add_group(page, monkeypatch, "Group 1")
+    _move_variable_to_group(page, "request", "Group 1")
+    _move_variable_to_group(page, "grant", "Group 1")
+    page._on_auto_sort_clicked()
     page._output_dir = tmp_path
-    page.export_group_combo.setCurrentIndex(0)
+    page.export_group_combo.setCurrentText("Group 1")
 
     page._on_generate_clicked()
 
@@ -229,21 +280,25 @@ def test_on_show_displays_previously_generated_path(qtbot):
     assert "/tmp/some/pkg" in page.status_label.text()
 
 
-# -- grouping -----------------------------------------------------------------------------
+# -- variable grouping ----------------------------------------------------------------------
 
 
-def test_on_show_builds_tree_with_everything_ungrouped_for_a_fresh_import(qtbot):
+def test_on_show_builds_both_trees_with_everything_unassigned_for_a_fresh_import(qtbot):
     page = MonitorExportPage(_state_with_three_requirements())
     qtbot.addWidget(page)
 
     page.on_show()
 
-    assert page.group_tree.topLevelItemCount() == 1
-    assert page.group_tree.topLevelItem(0).text(0) == _UNGROUPED
-    assert set(_group_member_texts(page, _UNGROUPED)) == {"r1", "r2", "r3"}
+    assert page.variable_tree.topLevelItemCount() == 1
+    assert page.variable_tree.topLevelItem(0).text(0) == _UNASSIGNED_VARIABLES
+    assert set(_variable_member_texts(page, _UNASSIGNED_VARIABLES)) == {"a", "b", "c", "z"}
+
+    assert page.requirement_tree.topLevelItemCount() == 1
+    assert page.requirement_tree.topLevelItem(0).text(0) == _UNASSIGNED_REQUIREMENTS
+    assert set(_requirement_member_texts(page, _UNASSIGNED_REQUIREMENTS)) == {"r1", "r2", "r3"}
 
 
-def test_on_show_rebuilds_the_tree_when_leaf_requirements_change(qtbot):
+def test_on_show_rebuilds_the_requirement_tree_when_leaf_requirements_change(qtbot):
     """A split saved as real nested requirements (import_split.py's _save_split) changes the
     leaf set -- the tree must drop the now-superseded parent and pick up its children, the same
     "entire current system" rule the realizability check already follows."""
@@ -256,7 +311,7 @@ def test_on_show_rebuilds_the_tree_when_leaf_requirements_change(qtbot):
     page = MonitorExportPage(state)
     qtbot.addWidget(page)
     page.on_show()
-    assert set(_group_member_texts(page, _UNGROUPED)) == {"r1"}
+    assert set(_requirement_member_texts(page, _UNASSIGNED_REQUIREMENTS)) == {"r1"}
 
     fret_import.requirements = [
         _req("r1", variables=["a"]),
@@ -265,49 +320,34 @@ def test_on_show_rebuilds_the_tree_when_leaf_requirements_change(qtbot):
     ]
     page.on_show()
 
-    assert set(_group_member_texts(page, _UNGROUPED)) == {"r1.1", "r1.2"}
+    assert set(_requirement_member_texts(page, _UNASSIGNED_REQUIREMENTS)) == {"r1.1", "r1.2"}
 
 
-def test_on_show_preserves_manual_grouping_when_leaf_set_is_unchanged(qtbot, monkeypatch):
+def test_on_show_preserves_manual_variable_grouping_when_set_is_unchanged(qtbot, monkeypatch):
     """Revisiting this page (e.g. after checking page 3 then coming back) must not silently
     discard a grouping the user already set up by hand."""
-    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("My Group", True))
     page = MonitorExportPage(_state_with_three_requirements())
     qtbot.addWidget(page)
     page.on_show()
-    page._on_add_group_clicked()
+    _add_group(page, monkeypatch, "My Group")
 
     page.on_show()
 
-    assert page.group_tree.topLevelItemCount() == 2
-    assert any(page.group_tree.topLevelItem(i).text(0) == "My Group" for i in range(page.group_tree.topLevelItemCount()))
+    assert page.variable_tree.topLevelItemCount() == 2
+    assert any(page.variable_tree.topLevelItem(i).text(0) == "My Group" for i in range(page.variable_tree.topLevelItemCount()))
 
 
-def test_auto_suggest_clusters_requirements_sharing_a_variable(qtbot):
-    page = MonitorExportPage(_state_with_three_requirements())
-    qtbot.addWidget(page)
-    page.on_show()
-
-    page._on_auto_suggest_clicked()
-
-    # r1/r2 (share "a") end up in one group; r3 (unrelated) in its own; Ungrouped stays empty.
-    assert page.group_tree.topLevelItemCount() == 3
-    assert _group_member_texts(page, _UNGROUPED) == []
-    groups = {page.group_tree.topLevelItem(i).text(0): _group_member_texts(page, page.group_tree.topLevelItem(i).text(0))
-              for i in range(1, page.group_tree.topLevelItemCount())}
-    assert {"r1", "r2"} in [set(v) for v in groups.values()]
-    assert {"r3"} in [set(v) for v in groups.values()]
-
-
-def test_add_group_creates_a_new_top_level_item(qtbot, monkeypatch):
-    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("New Group", True))
+def test_add_group_creates_a_matching_empty_group_in_both_trees(qtbot, monkeypatch):
     page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
 
-    page._on_add_group_clicked()
+    _add_group(page, monkeypatch, "New Group")
 
-    assert page.group_tree.topLevelItemCount() == 2
+    assert page.variable_tree.topLevelItemCount() == 2
+    assert page.requirement_tree.topLevelItemCount() == 2
+    assert _variable_member_texts(page, "New Group") == []
+    assert _requirement_member_texts(page, "New Group") == []
     assert page.export_group_combo.findText("New Group") != -1
 
 
@@ -319,65 +359,144 @@ def test_add_group_cancelled_adds_nothing(qtbot, monkeypatch):
 
     page._on_add_group_clicked()
 
-    assert page.group_tree.topLevelItemCount() == 1
+    assert page.variable_tree.topLevelItemCount() == 1
+    assert page.requirement_tree.topLevelItemCount() == 1
 
 
-def test_remove_group_moves_children_back_to_ungrouped(qtbot):
-    page = MonitorExportPage(_state_with_three_requirements())
+def test_add_group_rejects_a_duplicate_name(qtbot, monkeypatch):
+    called = []
+    page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
-    page._on_auto_suggest_clicked()
-    ab_group_item = next(
-        page.group_tree.topLevelItem(i) for i in range(page.group_tree.topLevelItemCount())
-        if set(_group_member_texts(page, page.group_tree.topLevelItem(i).text(0)) if page.group_tree.topLevelItem(i).text(0) != _UNGROUPED else []) == {"r1", "r2"}
+    _add_group(page, monkeypatch, "Group 1")
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
+
+    _add_group(page, monkeypatch, "Group 1")
+
+    assert called == [True]
+    assert page.variable_tree.topLevelItemCount() == 2  # unassigned pool + the one real group
+
+
+def test_auto_sort_assigns_unambiguous_requirements_and_leaves_the_rest_unassigned(qtbot, monkeypatch):
+    page = MonitorExportPage(_state_for_auto_sort())
+    qtbot.addWidget(page)
+    page.on_show()
+    _add_group(page, monkeypatch, "Group A")
+    _add_group(page, monkeypatch, "Group B")
+    _move_variable_to_group(page, "a", "Group A")
+    _move_variable_to_group(page, "b", "Group B")
+
+    page._on_auto_sort_clicked()
+
+    assert _requirement_member_texts(page, "Group A") == ["r1"]
+    assert _requirement_member_texts(page, "Group B") == ["r2"]
+    # r3 (spans both groups) and r4 (its only variable, "z", was never grouped) are ambiguous.
+    assert set(_requirement_member_texts(page, _UNASSIGNED_REQUIREMENTS)) == {"r3", "r4"}
+
+
+def test_auto_sort_without_any_group_shows_message(qtbot, monkeypatch):
+    called = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
+    page = MonitorExportPage(_state_for_auto_sort())
+    qtbot.addWidget(page)
+    page.on_show()
+
+    page._on_auto_sort_clicked()
+
+    assert called == [True]
+
+
+def test_removing_a_variable_group_also_removes_its_requirement_group(qtbot, monkeypatch):
+    page = MonitorExportPage(_state_for_auto_sort())
+    qtbot.addWidget(page)
+    page.on_show()
+    _add_group(page, monkeypatch, "Group A")
+    _move_variable_to_group(page, "a", "Group A")
+    page._on_auto_sort_clicked()
+    assert _requirement_member_texts(page, "Group A") == ["r1", "r3"]  # r3's other var ("b") is unassigned, not conflicting
+    group_item = next(
+        page.variable_tree.topLevelItem(i) for i in range(page.variable_tree.topLevelItemCount())
+        if page.variable_tree.topLevelItem(i).text(0) == "Group A"
     )
-    page.group_tree.setCurrentItem(ab_group_item)
+    page.variable_tree.setCurrentItem(group_item)
 
     page._on_remove_group_clicked()
 
-    assert set(_group_member_texts(page, _UNGROUPED)) == {"r1", "r2"}
-    assert page.group_tree.topLevelItemCount() == 2  # Ungrouped + the r3-only group
+    assert page.variable_tree.topLevelItemCount() == 1
+    assert page.requirement_tree.topLevelItemCount() == 1
+    assert "r1" in _requirement_member_texts(page, _UNASSIGNED_REQUIREMENTS)
+    assert "a" in _variable_member_texts(page, _UNASSIGNED_VARIABLES)
 
 
-def test_remove_ungrouped_shows_message(qtbot, monkeypatch):
+def test_remove_unassigned_variables_pool_shows_message(qtbot, monkeypatch):
     called = []
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
     page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
-    page.group_tree.setCurrentItem(page.group_tree.topLevelItem(0))
+    page.variable_tree.setCurrentItem(page.variable_tree.topLevelItem(0))
 
     page._on_remove_group_clicked()
 
     assert called == [True]
-    assert page.group_tree.topLevelItemCount() == 1
+    assert page.variable_tree.topLevelItemCount() == 1
 
 
-def test_export_group_selector_excludes_ungrouped(qtbot):
-    page = MonitorExportPage(_state_with_three_requirements())
-    qtbot.addWidget(page)
-    page.on_show()
-    page._on_auto_suggest_clicked()
-
-    names = [page.export_group_combo.itemText(i) for i in range(page.export_group_combo.count())]
-
-    assert _UNGROUPED not in names
-
-
-def test_renaming_a_group_updates_the_export_selector(qtbot):
+def test_renaming_a_variable_group_renames_its_requirement_group_and_export_selector(qtbot, monkeypatch):
     page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
-    group_item = page._group_header_item("Original Name", editable=True)
-    page.group_tree.addTopLevelItem(group_item)
-    page._refresh_export_group_selector()
-    assert page.export_group_combo.findText("Original Name") != -1
+    _add_group(page, monkeypatch, "Original Name")
+    group_item = next(
+        page.variable_tree.topLevelItem(i) for i in range(page.variable_tree.topLevelItemCount())
+        if page.variable_tree.topLevelItem(i).text(0) == "Original Name"
+    )
 
     group_item.setText(0, "Renamed")
-    page._on_group_tree_item_changed(group_item, 0)
+    page._on_variable_group_renamed(group_item, 0)
 
     assert page.export_group_combo.findText("Renamed") != -1
     assert page.export_group_combo.findText("Original Name") == -1
+    assert _requirement_member_texts(page, "Renamed") == []
+
+
+def test_export_group_selector_only_lists_custom_groups(qtbot, monkeypatch):
+    page = MonitorExportPage(_state_with_three_requirements())
+    qtbot.addWidget(page)
+    page.on_show()
+    _add_group(page, monkeypatch, "Group 1")
+
+    names = [page.export_group_combo.itemText(i) for i in range(page.export_group_combo.count())]
+
+    assert names == ["Group 1"]
+
+
+# -- click-to-popup --------------------------------------------------------------------------
+
+
+def test_clicking_a_requirement_shows_its_variables_in_a_tooltip(qtbot, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(QToolTip, "showText", lambda pos, text, widget=None: captured.update(text=text))
+    page = MonitorExportPage(_state_with_three_requirements())
+    qtbot.addWidget(page)
+    page.on_show()
+    item = page.requirement_tree.findItems("r1", Qt.MatchFlag.MatchRecursive, 0)[0]
+
+    page._on_requirement_item_clicked(item, 0)
+
+    assert captured["text"] == "a, b"
+
+
+def test_clicking_a_group_header_does_not_show_a_tooltip(qtbot, monkeypatch):
+    called = []
+    monkeypatch.setattr(QToolTip, "showText", lambda *a, **kw: called.append(True))
+    page = MonitorExportPage(_state_with_three_requirements())
+    qtbot.addWidget(page)
+    page.on_show()
+
+    page._on_requirement_item_clicked(page.requirement_tree.topLevelItem(0), 0)
+
+    assert called == []
 
 
 # -- export ------------------------------------------------------------------------------
@@ -397,36 +516,39 @@ def test_generate_uses_only_the_selected_groups_requirements(qtbot, monkeypatch,
         return output_dir
 
     monkeypatch.setattr("ltlsplitter.gui.pages.monitor_export.generate_ros2_monitor", fake_generate)
-    page = MonitorExportPage(_state_with_three_requirements())
+    page = MonitorExportPage(_state_for_auto_sort())
     qtbot.addWidget(page)
     page.on_show()
-    page._on_auto_suggest_clicked()
-    page.export_group_combo.setCurrentText(next(
-        page.group_tree.topLevelItem(i).text(0) for i in range(page.group_tree.topLevelItemCount())
-        if set(_group_member_texts(page, page.group_tree.topLevelItem(i).text(0)) if page.group_tree.topLevelItem(i).text(0) != _UNGROUPED else []) == {"r1", "r2"}
-    ))
+    _add_group(page, monkeypatch, "Group A")
+    _add_group(page, monkeypatch, "Group B")
+    _move_variable_to_group(page, "a", "Group A")
+    _move_variable_to_group(page, "b", "Group B")
+    page._on_auto_sort_clicked()
+    page.export_group_combo.setCurrentText("Group A")
     page._output_dir = tmp_path
 
     page._on_generate_clicked()
 
-    assert {s.requirement_id for s in captured["specs"]} == {"r1", "r2"}
-    assert captured["output_dir"] == tmp_path / _sanitize_dirname(page.export_group_combo.currentText())
+    assert {s.requirement_id for s in captured["specs"]} == {"r1"}
+    assert captured["output_dir"] == tmp_path / _sanitize_dirname("Group A")
 
 
 @requires_ogma
-def test_generate_success_updates_state(qtbot, tmp_path):
+def test_generate_success_updates_state(qtbot, monkeypatch, tmp_path):
     state = _state_with_import()
     page = MonitorExportPage(state)
     qtbot.addWidget(page)
     page.on_show()
-    page._on_auto_suggest_clicked()
+    _add_group(page, monkeypatch, "Group 1")
+    _move_variable_to_group(page, "request", "Group 1")
+    _move_variable_to_group(page, "grant", "Group 1")
+    page._on_auto_sort_clicked()
     page._output_dir = Path(tmp_path)
-    group_name = page.export_group_combo.itemText(0)
-    page.export_group_combo.setCurrentText(group_name)
+    page.export_group_combo.setCurrentText("Group 1")
 
     page._on_generate_clicked()
 
     assert "generated monitor package" in page.status_label.text().lower()
-    expected_dir = Path(tmp_path) / _sanitize_dirname(group_name)
+    expected_dir = Path(tmp_path) / _sanitize_dirname("Group 1")
     assert state.generated_monitor_path == str(expected_dir)
     assert (expected_dir / "copilot" / "src" / "Copilot.hs").is_file()

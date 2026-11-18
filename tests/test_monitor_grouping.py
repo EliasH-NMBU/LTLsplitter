@@ -1,5 +1,5 @@
 from ltlsplitter.core.models import FretRequirement
-from ltlsplitter.core.monitor_grouping import suggest_groups
+from ltlsplitter.core.monitor_grouping import auto_sort_requirements
 
 
 def _req(reqid: str, variables: list[str]) -> FretRequirement:
@@ -8,61 +8,68 @@ def _req(reqid: str, variables: list[str]) -> FretRequirement:
     )
 
 
-def test_empty_input_returns_no_groups():
-    assert suggest_groups([]) == []
+def test_empty_input_returns_empty_groups():
+    assert auto_sort_requirements({}, []) == {}
+    assert auto_sort_requirements({"Group A": ["a"]}, []) == {"Group A": []}
 
 
-def test_requirements_sharing_a_variable_end_up_in_the_same_group():
-    reqs = [_req("r1", ["a", "b"]), _req("r2", ["b", "c"])]
+def test_requirement_whose_variables_are_all_in_one_group_is_assigned_there():
+    groups = {"Group A": ["a", "b"]}
+    reqs = [_req("r1", ["a", "b"])]
 
-    groups = suggest_groups(reqs)
+    result = auto_sort_requirements(groups, reqs)
 
-    assert len(groups) == 1
-    assert set(groups[0].requirement_ids) == {"r1", "r2"}
-
-
-def test_requirements_sharing_no_variable_end_up_in_separate_groups():
-    reqs = [_req("r1", ["a"]), _req("r2", ["b"])]
-
-    groups = suggest_groups(reqs)
-
-    assert len(groups) == 2
-    assert {tuple(g.requirement_ids) for g in groups} == {("r1",), ("r2",)}
+    assert result == {"Group A": ["r1"]}
 
 
-def test_shared_variables_chain_transitively_through_a_middle_requirement():
-    """r1 and r3 share nothing directly, but both connect to r2 -- all three belong together,
-    since r2's monitor already has to subscribe to both variables' topics."""
-    reqs = [_req("r1", ["a"]), _req("r2", ["a", "b"]), _req("r3", ["b"])]
+def test_requirement_spanning_two_groups_is_left_unassigned():
+    """The example straight from the request: two variables, each in a different group --
+    genuinely ambiguous, so it must not show up in either group's list."""
+    groups = {"Group A": ["a"], "Group B": ["b"]}
+    reqs = [_req("r1", ["a", "b"])]
 
-    groups = suggest_groups(reqs)
+    result = auto_sort_requirements(groups, reqs)
 
-    assert len(groups) == 1
-    assert set(groups[0].requirement_ids) == {"r1", "r2", "r3"}
-
-
-def test_a_requirement_with_no_variables_gets_its_own_group():
-    reqs = [_req("r1", []), _req("r2", ["a"])]
-
-    groups = suggest_groups(reqs)
-
-    assert len(groups) == 2
+    assert result == {"Group A": [], "Group B": []}
 
 
-def test_group_name_reflects_the_shared_variable():
-    reqs = [_req("r1", ["classifier", "state"]), _req("r2", ["classifier"])]
+def test_requirement_with_no_variables_in_any_group_is_left_unassigned():
+    groups = {"Group A": ["a"]}
+    reqs = [_req("r1", ["z"]), _req("r2", [])]
 
-    groups = suggest_groups(reqs)
+    result = auto_sort_requirements(groups, reqs)
 
-    assert len(groups) == 1
-    assert "classifier" in groups[0].name
+    assert result == {"Group A": []}
+
+
+def test_an_unassigned_variable_does_not_block_assignment():
+    """r1 uses "a" (grouped) and "z" (still in the unassigned pool, i.e. not a key in
+    variable_groups at all) -- only one *group* is touched, so it's still assignable."""
+    groups = {"Group A": ["a"]}
+    reqs = [_req("r1", ["a", "z"])]
+
+    result = auto_sort_requirements(groups, reqs)
+
+    assert result == {"Group A": ["r1"]}
+
+
+def test_internal_variables_not_in_any_group_do_not_block_assignment():
+    """Mirrors how the caller builds variable_groups: an internal variable is never placed in
+    any group (it's excluded from the variable pool entirely), so it behaves exactly like any
+    other not-yet-grouped variable here -- present on the requirement, absent from every
+    group's list."""
+    groups = {"Group A": ["a"]}
+    reqs = [_req("r1", ["a", "derived_internal_var"])]
+
+    result = auto_sort_requirements(groups, reqs)
+
+    assert result == {"Group A": ["r1"]}
 
 
 def test_output_order_is_deterministic_by_first_appearance():
-    reqs = [_req("r1", ["a"]), _req("r2", ["b"]), _req("r3", ["a"])]
+    groups = {"Group A": ["a"]}
+    reqs = [_req("r1", ["a"]), _req("r2", ["z"]), _req("r3", ["a"])]
 
-    groups = suggest_groups(reqs)
+    result = auto_sort_requirements(groups, reqs)
 
-    # r1/r3 (variable "a") must appear before r2 (variable "b") -- r1 appeared first.
-    assert groups[0].requirement_ids == ["r1", "r3"]
-    assert groups[1].requirement_ids == ["r2"]
+    assert result == {"Group A": ["r1", "r3"]}

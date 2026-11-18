@@ -1,71 +1,32 @@
 from __future__ import annotations
 
-from ltlsplitter.core.models import FretRequirement, MonitorGroup
-
-_MAX_NAME_VARS = 3
+from ltlsplitter.core.models import FretRequirement
 
 
-def suggest_groups(requirements: list[FretRequirement]) -> list[MonitorGroup]:
-    """Clusters requirements that share at least one referenced variable (directly, or
-    transitively through a chain of other requirements) into the same monitoring group --
-    a deterministic, explainable starting point the user can then drag requirements out of or
-    into by hand, rather than an LLM guess. Two requirements sharing a variable is exactly what
-    makes them worth monitoring together: a single ROS2 Copilot node already has to subscribe to
-    that variable's topic for one of them, so including the other costs nothing extra and keeps
-    related obligations in one deployable package instead of scattered across several.
+def auto_sort_requirements(
+    variable_groups: dict[str, list[str]], requirements: list[FretRequirement],
+) -> dict[str, list[str]]:
+    """Assigns each requirement to whichever variable group -- set up by hand, drag-and-drop,
+    before this is called -- covers its variables, so requirements that need the same
+    variables' topics end up in the same monitor package automatically.
 
-    Requirements that share no variable with anything else become their own single-member group
-    (nothing to merge them with) -- not dropped, not bundled arbitrarily.
+    A requirement is assigned to a group only when all of the groups its variables touch is
+    exactly one: a variable that isn't in any group yet doesn't block assignment (it just hasn't
+    been organized yet), but a requirement whose variables span *two or more different* groups
+    is genuinely ambiguous -- which one it belongs with is a real judgment call, not something
+    to guess at -- so it's left out of the result entirely (the caller treats "not in any
+    group's list" as "needs the user to place it by hand"). A requirement referencing no
+    variable at all (or only ones in no group) is left out for the same reason: there's nothing
+    to sort it by.
     """
-    if not requirements:
-        return []
+    group_by_variable: dict[str, str] = {}
+    for group_name, variable_names in variable_groups.items():
+        for name in variable_names:
+            group_by_variable[name] = group_name
 
-    parent: dict[str, str] = {r.reqid: r.reqid for r in requirements}
-
-    def find(reqid: str) -> str:
-        while parent[reqid] != reqid:
-            parent[reqid] = parent[parent[reqid]]
-            reqid = parent[reqid]
-        return reqid
-
-    def union(a: str, b: str) -> None:
-        root_a, root_b = find(a), find(b)
-        if root_a != root_b:
-            parent[root_a] = root_b
-
-    by_variable: dict[str, list[str]] = {}
+    assigned: dict[str, list[str]] = {name: [] for name in variable_groups}
     for req in requirements:
-        for var in req.variable_names:
-            by_variable.setdefault(var, []).append(req.reqid)
-    for reqids_sharing_a_variable in by_variable.values():
-        for other in reqids_sharing_a_variable[1:]:
-            union(reqids_sharing_a_variable[0], other)
-
-    members_by_root: dict[str, list[str]] = {}
-    root_order: list[str] = []
-    for req in requirements:
-        root = find(req.reqid)
-        if root not in members_by_root:
-            members_by_root[root] = []
-            root_order.append(root)
-        members_by_root[root].append(req.reqid)
-
-    reqs_by_id = {r.reqid: r for r in requirements}
-    groups = []
-    for i, root in enumerate(root_order, start=1):
-        member_ids = members_by_root[root]
-        groups.append(MonitorGroup(name=f"Group {i}: {_group_label(member_ids, reqs_by_id)}", requirement_ids=member_ids))
-    return groups
-
-
-def _group_label(member_ids: list[str], reqs_by_id: dict[str, FretRequirement]) -> str:
-    """The variables every member has in common (or, if that's empty -- e.g. a chain A-B-C
-    where A and C share nothing directly -- every variable that appears anywhere in the group),
-    so the suggested name explains *why* these requirements ended up together."""
-    var_sets = [set(reqs_by_id[rid].variable_names) for rid in member_ids]
-    shared = set.intersection(*var_sets) if len(var_sets) > 1 else var_sets[0]
-    names = sorted(shared) if shared else sorted(set().union(*var_sets))
-    if not names:
-        return "no shared variables"
-    label = ", ".join(names[:_MAX_NAME_VARS])
-    return label + ("..." if len(names) > _MAX_NAME_VARS else "")
+        touched_groups = {group_by_variable[name] for name in req.variable_names if name in group_by_variable}
+        if len(touched_groups) == 1:
+            assigned[next(iter(touched_groups))].append(req.reqid)
+    return assigned
