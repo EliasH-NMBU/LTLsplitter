@@ -1,17 +1,46 @@
 -- Hand-written for this project -- unlike the other three files in this folder, NOT copied
--- from nuXmv's own examples/. Included because none of nuXmv 2.2.0's bundled example files
--- (checked all of them) contain more than one LTLSPEC statement, so there was nothing real to
--- demonstrate smv_import.py importing several requirements out of one file. A small two-input
--- arbiter: two requesters, two grant lines, one mode variable, three independent properties.
+-- from nuXmv's own examples/ (checked all of them; none has more than one LTLSPEC statement,
+-- so none could demonstrate importing several requirements from one file).
+--
+-- An earlier version of this file used three trivially atomic properties (mutual exclusion,
+-- "eventually granted", "grant implies it was requested") -- real enough to prove the importer
+-- produces multiple requirements, but each one is a single indivisible obligation with nothing
+-- for LTLsplitter's actual job (suggest/validate a decomposition) to do. This version keeps that
+-- one indecomposable property as a negative control, but replaces the other two with "hidden
+-- conjunction" properties -- true only via a propositional law (distributing an implication over
+-- a disjunctive antecedent, splitting a biconditional), not readable off the formula's syntax --
+-- plus a typed variable-to-variable comparison. Every non-trivial claim below (which splits are
+-- sound, which aren't, that neither half of a sound split is already the whole thing) was
+-- checked against the real nuXmv/Spot/SPIN binaries via validate_decomposition before this was
+-- committed, not just asserted.
 
 MODULE main
 VAR
-  req1 : boolean;
-  req2 : boolean;
-  grant1 : boolean;
-  grant2 : boolean;
-  mode : {idle, busy};
+  mode : 0..3;
+  alarm : boolean;
+  out1 : boolean;
+  out2 : boolean;
+  x : 0..5;
+  y : 0..5;
+  safe : boolean;
 
-LTLSPEC NAME mutual_exclusion := G (! (grant1 & grant2));
-LTLSPEC NAME eventual_response := G (req1 -> F grant1);
-LTLSPEC NAME grant_implies_was_requested := G (grant1 -> (H req1));
+-- Indecomposable: a genuine cross-output coupling, not a conjunction of independent per-output
+-- rules -- "out1 is never true" & "out2 is never true" is strictly stronger than this, and is
+-- NOT equivalent to it (confirmed: not_tautology). A correct run of this methodology should
+-- recognize there's nothing sound to split out of this one.
+LTLSPEC NAME mutual_exclusion := G (! (out1 & out2));
+
+-- Hidden conjunction: "(mode=1 | mode=2) -> alarm" only decomposes into
+-- "(mode=1 -> alarm) & (mode=2 -> alarm)" by distributing the implication over the disjunctive
+-- antecedent -- there's no "&" anywhere in the original to just read off syntactically.
+LTLSPEC NAME hidden_disjunctive_trigger := G (((mode = 1) | (mode = 2)) -> alarm);
+
+-- Same hidden-conjunction law, past-time this time (splits into two H-wrapped implications) --
+-- exercises the importer's past-operator detection (this is the only LTLSPEC here that uses H)
+-- as well as the decomposition methodology.
+LTLSPEC NAME hidden_biconditional_past := H (alarm <-> ((mode = 1) | (mode = 2)));
+
+-- A typed variable-to-variable comparison (not "x = <literal>") -- exercises the SPIN
+-- domain-widening path (core/equivalence_check.py's _promela_model) that variable-to-variable
+-- comparisons specifically need, confirmed working end to end from this file's own text.
+LTLSPEC NAME typed_variable_comparison := G ((x = y) -> safe);

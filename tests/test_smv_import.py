@@ -2,6 +2,9 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import requires_nuxmv, requires_spin, requires_spot
+
+from ltlsplitter.core.equivalence_check import _check_tautology_nuxmv, _check_tautology_spin, _check_tautology_spot
 from ltlsplitter.core.models import VariableType
 from ltlsplitter.core.smv_import import InvalidSmvFileError, import_smv_file
 
@@ -175,16 +178,69 @@ def test_krca1p1_real_benchmark_imports_as_one_large_mixed_time_requirement():
     assert len(req.variable_names) == 16
 
 
-def test_arbiter_multi_property_imports_three_separate_named_requirements():
+def test_arbiter_multi_property_imports_four_separate_named_requirements():
     """krca1p1.smv (and every other file nuXmv ships) has only one LTLSPEC -- this hand-written
     fixture is what actually exercises importing several requirements from one .smv file."""
     fi = import_smv_file(_FIXTURES / "arbiter_multi_property.smv")
 
     assert [r.reqid for r in fi.requirements] == [
-        "mutual_exclusion", "eventual_response", "grant_implies_was_requested",
+        "mutual_exclusion", "hidden_disjunctive_trigger", "hidden_biconditional_past",
+        "typed_variable_comparison",
     ]
-    assert fi.requirement("mutual_exclusion").ft_formula == "G (! (grant1 & grant2))"
-    assert fi.requirement("eventual_response").ft_formula == "G (req1 -> F grant1)"
-    mixed = fi.requirement("grant_implies_was_requested")
-    assert mixed.pt_formula == "G (grant1 -> (H req1))"  # past operator present -- pt only
-    assert mixed.ft_formula == ""
+    assert fi.requirement("mutual_exclusion").ft_formula == "G (! (out1 & out2))"
+    assert fi.requirement("hidden_disjunctive_trigger").ft_formula == "G (((mode = 1) | (mode = 2)) -> alarm)"
+    past = fi.requirement("hidden_biconditional_past")
+    assert past.pt_formula == "H (alarm <-> ((mode = 1) | (mode = 2)))"  # the file's one H property
+    assert past.ft_formula == ""
+    assert fi.requirement("typed_variable_comparison").ft_formula == "G ((x = y) -> safe)"
+
+
+@requires_spot
+def test_arbiter_mutual_exclusion_has_no_sound_per_output_split():
+    """Negative control: splitting the cross-output coupling into independent per-output rules
+    is strictly stronger, not equivalent -- confirms this fixture isn't all easy "just read off
+    the &" cases."""
+    fi = import_smv_file(_FIXTURES / "arbiter_multi_property.smv")
+    req = fi.requirement("mutual_exclusion")
+    naive_split = "((G (! out1)) & (G (! out2)))"
+
+    result = _check_tautology_spot(f"({req.ft_formula}) <-> ({naive_split})", fi.variables)
+
+    assert result.status == "not_tautology"
+
+
+@requires_spot
+def test_arbiter_hidden_disjunctive_trigger_has_a_real_but_nonsyntactic_split():
+    """True only by distributing the implication over the disjunctive antecedent -- there's no
+    "&" anywhere in the original formula to read the split off of."""
+    fi = import_smv_file(_FIXTURES / "arbiter_multi_property.smv")
+    req = fi.requirement("hidden_disjunctive_trigger")
+    sound_split = "((G ((mode = 1) -> alarm)) & (G ((mode = 2) -> alarm)))"
+
+    result = _check_tautology_spot(f"({req.ft_formula}) <-> ({sound_split})", fi.variables)
+
+    assert result.status == "tautology"
+
+
+@requires_nuxmv
+def test_arbiter_hidden_biconditional_past_has_a_real_but_nonsyntactic_split():
+    fi = import_smv_file(_FIXTURES / "arbiter_multi_property.smv")
+    req = fi.requirement("hidden_biconditional_past")
+    sound_split = (
+        "((H ((((mode = 1) | (mode = 2))) -> alarm)) & "
+        "(H (alarm -> (((mode = 1) | (mode = 2))))))"
+    )
+
+    result = _check_tautology_nuxmv(f"({req.pt_formula}) <-> ({sound_split})", fi.variables)
+
+    assert result.status == "tautology"
+
+
+@requires_spin
+def test_arbiter_typed_variable_comparison_validates_through_spins_domain_widening():
+    fi = import_smv_file(_FIXTURES / "arbiter_multi_property.smv")
+    req = fi.requirement("typed_variable_comparison")
+
+    result = _check_tautology_spin(f"({req.ft_formula}) <-> ({req.ft_formula})", fi.variables)
+
+    assert result.status == "tautology"

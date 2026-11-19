@@ -25,7 +25,20 @@ for this project.
 - **arbiter_multi_property.smv** -- hand-written for this project, *not* from nuXmv's examples.
   Checked every file nuXmv 2.2.0 ships, including the three above: none has more than one
   `LTLSPEC` statement, so there was no real file to demonstrate `smv_import.py` importing
-  several requirements out of one. Three independent `NAME`d properties (mutual exclusion,
-  eventual response, and a mixed future+past one) over a small request/grant arbiter; each
-  requirement's extracted formula was checked for self-equivalence against the real nuXmv/Spot
-  binaries before this was added.
+  several requirements out of one. Four properties over a small arbiter (`mode`, two typed
+  `0..5` variables, a few booleans), chosen to actually exercise LTLsplitter's own job
+  (suggesting/validating a *decomposition*), not just to prove multiple requirements import --
+  an earlier version used three independently trivial, already-atomic properties, which proved
+  nothing about the splitting methodology:
+  - `mutual_exclusion` -- a genuine cross-output coupling with **no** sound decomposition
+    (negative control: splitting it into independent per-output rules is strictly stronger and
+    not equivalent -- confirmed `not_tautology`).
+  - `hidden_disjunctive_trigger` and `hidden_biconditional_past` -- "hidden conjunction"
+    properties, true only via a propositional law (distributing an implication over a
+    disjunctive antecedent; splitting a biconditional) rather than readable off the formula's
+    surface syntax -- the latter is also the file's one past-time (`H`) property. Both splits,
+    and that neither half alone already equals the whole, were confirmed `tautology`/
+    `not_tautology` as expected against the real nuXmv/Spot/SPIN binaries, using the exact text
+    `import_smv_file` parses out of this file.
+  - `typed_variable_comparison` -- a variable-to-variable comparison (`x = y`, not `x = 3`),
+    exercising the SPIN domain-widening path that kind of comparison specifically needs.
