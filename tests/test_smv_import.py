@@ -173,3 +173,18 @@ def test_krca1p1_real_benchmark_imports_as_one_large_mixed_time_requirement():
     assert req.pt_formula  # mixes H/O/S/Y with G/X/U -- goes entirely to pt_formula
     assert req.ft_formula == ""
     assert len(req.variable_names) == 16
+
+
+def test_arbiter_multi_property_imports_three_separate_named_requirements():
+    """krca1p1.smv (and every other file nuXmv ships) has only one LTLSPEC -- this hand-written
+    fixture is what actually exercises importing several requirements from one .smv file."""
+    fi = import_smv_file(_FIXTURES / "arbiter_multi_property.smv")
+
+    assert [r.reqid for r in fi.requirements] == [
+        "mutual_exclusion", "eventual_response", "grant_implies_was_requested",
+    ]
+    assert fi.requirement("mutual_exclusion").ft_formula == "G (! (grant1 & grant2))"
+    assert fi.requirement("eventual_response").ft_formula == "G (req1 -> F grant1)"
+    mixed = fi.requirement("grant_implies_was_requested")
+    assert mixed.pt_formula == "G (grant1 -> (H req1))"  # past operator present -- pt only
+    assert mixed.ft_formula == ""

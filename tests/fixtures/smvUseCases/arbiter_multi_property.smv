@@ -1,0 +1,17 @@
+-- Hand-written for this project -- unlike the other three files in this folder, NOT copied
+-- from nuXmv's own examples/. Included because none of nuXmv 2.2.0's bundled example files
+-- (checked all of them) contain more than one LTLSPEC statement, so there was nothing real to
+-- demonstrate smv_import.py importing several requirements out of one file. A small two-input
+-- arbiter: two requesters, two grant lines, one mode variable, three independent properties.
+
+MODULE main
+VAR
+  req1 : boolean;
+  req2 : boolean;
+  grant1 : boolean;
+  grant2 : boolean;
+  mode : {idle, busy};
+
+LTLSPEC NAME mutual_exclusion := G (! (grant1 & grant2));
+LTLSPEC NAME eventual_response := G (req1 -> F grant1);
+LTLSPEC NAME grant_implies_was_requested := G (grant1 -> (H req1));
