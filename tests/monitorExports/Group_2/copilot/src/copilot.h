@@ -1,0 +1,13 @@
+extern int32_t classifier;
+extern int32_t distance_to_target;
+extern int32_t state;
+void handlerState_req101(void);
+void handlerDtt_assumption(void);
+void handlerState_req201(void);
+void handlerState_req202(void);
+void handlerState_req203(void);
+void handlerState_req102(void);
+void handlerClassifier_empty(void);
+void handlerClassifier_assumption(void);
+void handlerState_req103(void);
+void step(void);
