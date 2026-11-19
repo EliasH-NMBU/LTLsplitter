@@ -37,31 +37,30 @@ _SUGGEST_SYSTEM_PROMPT = (
     "long or deeply nested."
 )
 
-def _decompose_schema(min_items: int | None) -> dict:
-    sub_formulas_schema = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "pt_formula": {"type": "string", "description": "Past-time LTL (H/O/S/Y)."},
-                "ft_formula": {"type": "string", "description": "Future-time LTL (G/F/X/U)."},
+_DECOMPOSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sub_formulas": {
+            "type": "array",
+            # No "minItems" here -- confirmed the Anthropic structured-output API rejects it
+            # outright for this array ("'minItems' values other than 0 or 1 are not supported"),
+            # a 400 at request time, not a soft validation warning. The "at least 2" rule for a
+            # Force Split (count=None) is enforced in Python instead, after the response comes
+            # back -- see decompose() below.
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pt_formula": {"type": "string", "description": "Past-time LTL (H/O/S/Y)."},
+                    "ft_formula": {"type": "string", "description": "Future-time LTL (G/F/X/U)."},
+                },
+                "required": ["pt_formula", "ft_formula"],
+                "additionalProperties": False,
             },
-            "required": ["pt_formula", "ft_formula"],
-            "additionalProperties": False,
         },
-    }
-    if min_items is not None:
-        sub_formulas_schema["minItems"] = min_items
-    return {
-        "type": "object",
-        "properties": {"sub_formulas": sub_formulas_schema},
-        "required": ["sub_formulas"],
-        "additionalProperties": False,
-    }
-
-
-_DECOMPOSE_SCHEMA = _decompose_schema(None)
-_DECOMPOSE_SCHEMA_ANY_COUNT = _decompose_schema(min_items=2)
+    },
+    "required": ["sub_formulas"],
+    "additionalProperties": False,
+}
 
 _DECOMPOSE_SYSTEM_PROMPT = (
     "You split a single LTL requirement into sub-formulas -- exactly the requested number when "
@@ -131,13 +130,11 @@ def decompose(
             "Split this into multiple independently-checkable sub-formulas. Decide how many "
             "sub-formulas are appropriate yourself -- there is no fixed target count."
         )
-        schema = _DECOMPOSE_SCHEMA_ANY_COUNT
     else:
         prompt = (
             f"Past-time form: {pt_formula}\nFuture-time form: {ft_formula}\n"
             f"Split into exactly {count} sub-formula(s)."
         )
-        schema = _DECOMPOSE_SCHEMA
     if feedback:
         prompt += f"\n\nA previous attempt failed validation: {feedback}\nTry again, fixing this."
 
@@ -146,10 +143,18 @@ def decompose(
         max_tokens=4096,
         system=_DECOMPOSE_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": _DECOMPOSE_SCHEMA}},
     )
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)
+    if count is None and len(data["sub_formulas"]) < 2:
+        # The schema can't enforce "at least 2" itself (Anthropic's structured-output API
+        # rejects any minItems other than 0/1), so this is caught here instead of shipping a
+        # single-part "split" that wouldn't actually be one.
+        raise RuntimeError(
+            "The LLM couldn't find a genuine split for this formula -- it returned only one "
+            "part even though Force Split asked for multiple."
+        )
     return [
         SubFormula(id=f"{parent_id}.{i + 1}", pt_formula=item["pt_formula"], ft_formula=item["ft_formula"])
         for i, item in enumerate(data["sub_formulas"])
