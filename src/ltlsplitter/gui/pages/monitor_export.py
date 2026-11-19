@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -11,11 +12,15 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QToolTip,
     QTreeWidget,
     QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ltlsplitter.core.models import FretRequirement, Specification, Variable, VariableRole
@@ -28,6 +33,7 @@ from ltlsplitter.gui.theme import compact, set_status
 _UNASSIGNED_VARIABLES = "Unassigned Variables"
 _UNASSIGNED_REQUIREMENTS = "Unassigned Requirements"
 _GROUP_ID_ROLE = Qt.ItemDataRole.UserRole
+_COLUMN_WIDTH = 170
 
 
 def _sanitize_dirname(name: str) -> str:
@@ -39,20 +45,60 @@ def _sanitize_dirname(name: str) -> str:
     return sanitized or "group"
 
 
+class _GroupHeaderLabel(QLabel):
+    """A column header that can be double-clicked to rename its group -- QLabel has no such
+    signal built in."""
+
+    doubleClicked = Signal()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+
+class _VariableColumnList(QListWidget):
+    """One group's column of variables. Qt's built-in drag-and-drop between two separate
+    QListWidgets defaults to *copying* the dragged item, not moving it -- confirmed necessary to
+    override dropEvent, since the default would otherwise leave the variable listed in both the
+    source and target columns instead of actually moving it."""
+
+    def dropEvent(self, event) -> None:
+        source = event.source()
+        if isinstance(source, QListWidget) and source is not self:
+            for item in source.selectedItems():
+                source.takeItem(source.row(item))
+                self.addItem(item)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
+
+
+@dataclass
+class _VariableColumn:
+    group_id: int | None
+    """None for the fixed "Unassigned Variables" pool column -- every real group has one."""
+    name: str
+    container: QWidget
+    header_label: _GroupHeaderLabel
+    list_widget: _VariableColumnList
+
+
 class MonitorExportPage(WizardPage):
     title = "4. Ogma/Copilot Export"
     description = (
         "Ogma/Copilot only understands past-time LTL (H/O/S/Y) -- every property exported here "
         "is built from each requirement's pt form, never its ft form; there's no future-time "
-        "support to fall back on. Group the variables first -- drag them from \"Unassigned "
-        "Variables\" into groups of your own -- then click \"Auto Sort\" to sort requirements "
-        "into whichever group covers all of their variables; a requirement whose variables span "
-        "more than one group is left in \"Unassigned Requirements\" for you to place by hand. "
-        "Click a requirement to see just the variables it references. Each group becomes its "
-        "own separate ROS2 Copilot monitor package, so a large system doesn't have to ship as "
-        "one monolithic monitor. This produces a source package, not a running monitor -- see "
-        "README.md's \"Using the generated monitor\" section for the compile/build/run steps "
-        "(runhaskell, colcon build) and how to read violations off the generated handler topics."
+        "support to fall back on. Group the variables first -- each group is its own column, "
+        "side by side (scroll right for more); drag variables out of \"Unassigned Variables\" "
+        "into a group, double-click a group's name to rename it, × to remove it. Then "
+        "click \"Auto Sort\" to sort requirements into whichever group covers all of their "
+        "variables; a requirement whose variables span more than one group is left in "
+        "\"Unassigned Requirements\" for you to place by hand. Click a requirement to see just "
+        "the variables it references. Each group becomes its own separate ROS2 Copilot monitor "
+        "package, so a large system doesn't have to ship as one monolithic monitor. This "
+        "produces a source package, not a running monitor -- see README.md's \"Using the "
+        "generated monitor\" section for the compile/build/run steps (runhaskell, colcon build) "
+        "and how to read violations off the generated handler topics."
     )
 
     def __init__(self, state: ProjectState, parent=None):
@@ -61,6 +107,7 @@ class MonitorExportPage(WizardPage):
         self._variable_set_built_for: frozenset[str] | None = None
         self._requirement_tree_built_for_reqids: frozenset[str] | None = None
         self._next_group_id = 1
+        self._variable_columns: list[_VariableColumn] = []
 
         self.content_layout.addWidget(QLabel("Source file:"))
         self.source_file_label = QLabel()
@@ -80,25 +127,28 @@ class MonitorExportPage(WizardPage):
         self.topics_tree.itemChanged.connect(self._on_topic_item_changed)
         self.content_layout.addWidget(self.topics_tree)
 
-        self.content_layout.addWidget(QLabel("Variable groups (drag variables between groups):"))
+        self.content_layout.addWidget(QLabel(
+            "Variable groups -- one column per group, side by side (drag variables between "
+            "columns; double-click a group's name to rename it, × to remove it):"
+        ))
         variable_actions_row = QHBoxLayout()
         add_variable_group_button = compact(QPushButton("Add Group"))
         add_variable_group_button.clicked.connect(self._on_add_group_clicked)
-        remove_variable_group_button = compact(QPushButton("Remove Selected Group"))
-        remove_variable_group_button.clicked.connect(self._on_remove_group_clicked)
         variable_actions_row.addWidget(add_variable_group_button)
-        variable_actions_row.addWidget(remove_variable_group_button)
         variable_actions_row.addStretch()
         self.content_layout.addLayout(variable_actions_row)
 
-        self.variable_tree = QTreeWidget()
-        self.variable_tree.setHeaderHidden(True)
-        self.variable_tree.setMinimumHeight(160)
-        self.variable_tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.variable_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.variable_tree.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.variable_tree.itemChanged.connect(self._on_variable_group_renamed)
-        self.content_layout.addWidget(self.variable_tree)
+        self.variable_columns_scroll = QScrollArea()
+        self.variable_columns_scroll.setWidgetResizable(True)
+        self.variable_columns_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.variable_columns_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.variable_columns_scroll.setMinimumHeight(240)
+        strip = QWidget()
+        self._variable_columns_layout = QHBoxLayout(strip)
+        self._variable_columns_layout.setContentsMargins(0, 0, 0, 4)
+        self._variable_columns_layout.addStretch()  # keeps columns left-aligned as more are added
+        self.variable_columns_scroll.setWidget(strip)
+        self.content_layout.addWidget(self.variable_columns_scroll)
 
         auto_sort_row = QHBoxLayout()
         auto_sort_button = compact(QPushButton("Auto Sort"))
@@ -154,7 +204,7 @@ class MonitorExportPage(WizardPage):
         current_variable_names = frozenset(v.name for v in self._exportable_variables())
         if current_variable_names != self._variable_set_built_for:
             self._rebuild_topics_tree()
-            self._rebuild_variable_tree_everything_unassigned()
+            self._rebuild_variable_columns_everything_unassigned()
             self._variable_set_built_for = current_variable_names
         current_reqids = frozenset(r.reqid for r in self._leaf_requirements())
         if current_reqids != self._requirement_tree_built_for_reqids:
@@ -182,7 +232,7 @@ class MonitorExportPage(WizardPage):
         """Rebuilt only when the exportable variable set actually changes (a fresh import, or a
         split that introduces/removes variables) -- revisiting this page otherwise must not
         discard topic overrides the user already typed in, the same rule `on_show` already
-        follows for the group trees below."""
+        follows for the grouping widgets below."""
         variables = self._exportable_variables()
         self.topics_tree.blockSignals(True)
         self.topics_tree.clear()
@@ -218,8 +268,7 @@ class MonitorExportPage(WizardPage):
 
     @staticmethod
     def _leaf_item(text: str) -> QTreeWidgetItem:
-        """A draggable, non-editable, non-drop-target leaf -- a variable name in `variable_tree`
-        or a reqid in `requirement_tree`."""
+        """A draggable, non-editable, non-drop-target leaf in `requirement_tree`."""
         item = QTreeWidgetItem([text])
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
         return item
@@ -238,40 +287,73 @@ class MonitorExportPage(WizardPage):
         item.setFont(0, font)
         return item
 
-    def _rebuild_variable_tree_everything_unassigned(self) -> None:
+    def _build_variable_column(self, name: str, group_id: int | None, *, removable: bool) -> _VariableColumn:
+        container = QWidget()
+        container.setFixedWidth(_COLUMN_WIDTH)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        header_row = QHBoxLayout()
+        header_label = _GroupHeaderLabel(name)
+        font = header_label.font()
+        font.setBold(True)
+        header_label.setFont(font)
+        header_label.setWordWrap(True)
+        header_row.addWidget(header_label, 1)
+        if removable:
+            header_label.setToolTip("Double-click to rename")
+            remove_button = compact(QPushButton("×"))
+            remove_button.setFixedWidth(22)
+            remove_button.setToolTip(f'Remove "{name}"')
+            remove_button.clicked.connect(lambda: self._on_remove_variable_group_clicked(group_id))
+            header_row.addWidget(remove_button)
+        layout.addLayout(header_row)
+
+        list_widget = _VariableColumnList()
+        list_widget.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        list_widget.setMinimumHeight(180)
+        layout.addWidget(list_widget)
+
+        if removable:
+            header_label.doubleClicked.connect(lambda: self._on_rename_variable_group_clicked(group_id))
+        return _VariableColumn(group_id, name, container, header_label, list_widget)
+
+    def _rebuild_variable_columns_everything_unassigned(self) -> None:
         """The starting point whenever the exportable variable set changes -- nothing grouped
         yet, built fresh for a different variable set than whatever grouping existed before."""
-        self.variable_tree.blockSignals(True)
-        self.variable_tree.clear()
-        pool = self._header_item(_UNASSIGNED_VARIABLES, editable=False)
-        self.variable_tree.addTopLevelItem(pool)
+        for column in self._variable_columns:
+            self._variable_columns_layout.removeWidget(column.container)
+            column.container.deleteLater()
+        self._variable_columns = []
+
+        pool = self._build_variable_column(_UNASSIGNED_VARIABLES, group_id=None, removable=False)
+        self._variable_columns_layout.insertWidget(0, pool.container)
+        self._variable_columns.append(pool)
         for var in self._exportable_variables():
-            pool.addChild(self._leaf_item(var.name))
-        self.variable_tree.expandAll()
-        self.variable_tree.blockSignals(False)
+            pool.list_widget.addItem(var.name)
+
         self._next_group_id = 1
         self._rebuild_requirement_tree_everything_unassigned()  # old groups no longer apply
 
     def _variable_groups(self) -> dict[int, tuple[str, list[str]]]:
-        """Every custom (non-pool) top-level item in `variable_tree`, as
-        {group_id: (name, [variable names])} -- `variable_tree` is the one source of truth for
-        which groups exist and what they're called."""
-        groups: dict[int, tuple[str, list[str]]] = {}
-        for i in range(self.variable_tree.topLevelItemCount()):
-            item = self.variable_tree.topLevelItem(i)
-            if item.text(0) == _UNASSIGNED_VARIABLES:
-                continue
-            group_id = item.data(0, _GROUP_ID_ROLE)
-            variable_names = [item.child(j).text(0) for j in range(item.childCount())]
-            groups[group_id] = (item.text(0), variable_names)
-        return groups
+        """Every custom (non-pool) column, as {group_id: (name, [variable names])} -- the
+        column strip is the one source of truth for which groups exist and what they're called."""
+        return {
+            column.group_id: (
+                column.name, [column.list_widget.item(i).text() for i in range(column.list_widget.count())],
+            )
+            for column in self._variable_columns
+            if column.group_id is not None
+        }
 
     def _rebuild_requirement_tree_everything_unassigned(self) -> None:
         """Rebuilds `requirement_tree` from scratch: "Unassigned Requirements" plus one empty
-        group per `variable_tree` group (same group_id, so a later rename still finds it), with
-        every leaf requirement starting in the unassigned pool. Called whenever the leaf
-        requirement set changes, and whenever `variable_tree`'s own groups are rebuilt from
-        scratch (a new variable set invalidates any prior requirement sort too)."""
+        group per variable column (same group_id, so a later rename still finds it), with every
+        leaf requirement starting in the unassigned pool. Called whenever the leaf requirement
+        set changes, and whenever the variable columns are rebuilt from scratch (a new variable
+        set invalidates any prior requirement sort too)."""
         leaves = self._leaf_requirements()
         self.requirement_tree.blockSignals(True)
         self.requirement_tree.clear()
@@ -341,26 +423,25 @@ class MonitorExportPage(WizardPage):
             return
         group_id = self._next_group_id
         self._next_group_id += 1
-        self.variable_tree.addTopLevelItem(self._header_item(name, editable=True, group_id=group_id))
+
+        column = self._build_variable_column(name, group_id, removable=True)
+        self._variable_columns_layout.insertWidget(self._variable_columns_layout.count() - 1, column.container)
+        self._variable_columns.append(column)
+
         self.requirement_tree.addTopLevelItem(self._header_item(name, editable=False, group_id=group_id))
         self._refresh_export_group_selector()
 
-    def _on_remove_group_clicked(self) -> None:
-        item = self.variable_tree.currentItem()
-        if item is None or item.parent() is not None:
-            QMessageBox.information(self, "No group selected", "Select a group (not a variable) to remove.")
-            return
-        if item.text(0) == _UNASSIGNED_VARIABLES:
-            QMessageBox.information(
-                self, "Can't remove this", f'"{_UNASSIGNED_VARIABLES}" is a holding pen, not a deployable group.',
-            )
+    def _on_remove_variable_group_clicked(self, group_id: int) -> None:
+        column = next((c for c in self._variable_columns if c.group_id == group_id), None)
+        if column is None:
             return
 
-        group_id = item.data(0, _GROUP_ID_ROLE)
-        unassigned_variables = self.variable_tree.topLevelItem(0)
-        for child in item.takeChildren():
-            unassigned_variables.addChild(child)
-        self.variable_tree.takeTopLevelItem(self.variable_tree.indexOfTopLevelItem(item))
+        pool_list = self._variable_columns[0].list_widget
+        while column.list_widget.count():
+            pool_list.addItem(column.list_widget.takeItem(0))
+        self._variable_columns_layout.removeWidget(column.container)
+        column.container.deleteLater()
+        self._variable_columns.remove(column)
 
         requirement_group_item = self._requirement_group_item(group_id)
         if requirement_group_item is not None:
@@ -371,15 +452,26 @@ class MonitorExportPage(WizardPage):
 
         self._refresh_export_group_selector()
 
-    def _on_variable_group_renamed(self, item: QTreeWidgetItem, _column: int) -> None:
-        if item.parent() is not None:  # only top-level (group) renames matter here
+    def _on_rename_variable_group_clicked(self, group_id: int) -> None:
+        column = next((c for c in self._variable_columns if c.group_id == group_id), None)
+        if column is None:
             return
-        group_id = item.data(0, _GROUP_ID_ROLE)
-        if group_id is None:  # "Unassigned Variables" itself isn't editable, but be defensive
+        name, ok = QInputDialog.getText(self, "Rename group", "Group name:", text=column.name)
+        if not ok or not name.strip():
             return
+        name = name.strip()
+        if any(
+            other.group_id != group_id and other.name == name
+            for other in self._variable_columns if other.group_id is not None
+        ):
+            QMessageBox.information(self, "Name already used", f'A group named "{name}" already exists -- pick a different name.')
+            return
+        column.name = name
+        column.header_label.setText(name)
+
         requirement_group_item = self._requirement_group_item(group_id)
         if requirement_group_item is not None:
-            requirement_group_item.setText(0, item.text(0))
+            requirement_group_item.setText(0, name)
         self._refresh_export_group_selector()
 
     def _refresh_export_group_selector(self) -> None:

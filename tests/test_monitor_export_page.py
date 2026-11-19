@@ -11,6 +11,7 @@ from ltlsplitter.gui.pages.monitor_export import (
     MonitorExportPage,
     _UNASSIGNED_REQUIREMENTS,
     _UNASSIGNED_VARIABLES,
+    _VariableColumnList,
     _sanitize_dirname,
 )
 
@@ -64,12 +65,16 @@ def _state_for_auto_sort() -> ProjectState:
     return ProjectState(fret_import=fret_import, fret_import_path="/some/file.json")
 
 
+def _column(page: MonitorExportPage, name: str):
+    for column in page._variable_columns:
+        if column.name == name:
+            return column
+    raise AssertionError(f"no variable column named {name!r}")
+
+
 def _variable_member_texts(page: MonitorExportPage, group_name: str) -> list[str]:
-    for i in range(page.variable_tree.topLevelItemCount()):
-        item = page.variable_tree.topLevelItem(i)
-        if item.text(0) == group_name:
-            return [item.child(j).text(0) for j in range(item.childCount())]
-    raise AssertionError(f"no top-level variable group named {group_name!r}")
+    column = _column(page, group_name)
+    return [column.list_widget.item(i).text() for i in range(column.list_widget.count())]
 
 
 def _requirement_member_texts(page: MonitorExportPage, group_name: str) -> list[str]:
@@ -86,15 +91,16 @@ def _add_group(page: MonitorExportPage, monkeypatch, name: str) -> None:
 
 
 def _move_variable_to_group(page: MonitorExportPage, var_name: str, group_name: str) -> None:
-    """Simulates what dragging a variable leaf into a group produces -- real Qt drag-and-drop
-    isn't simulated here (same precedent the old group_tree tests followed)."""
-    item = page.variable_tree.findItems(var_name, Qt.MatchFlag.MatchRecursive, 0)[0]
-    item.parent().removeChild(item)
-    group_item = next(
-        page.variable_tree.topLevelItem(i) for i in range(page.variable_tree.topLevelItemCount())
-        if page.variable_tree.topLevelItem(i).text(0) == group_name
-    )
-    group_item.addChild(item)
+    """Simulates what dragging a variable into a column produces -- real Qt drag-and-drop isn't
+    simulated here (_VariableColumnList.dropEvent itself is covered separately, directly)."""
+    for column in page._variable_columns:
+        items = column.list_widget.findItems(var_name, Qt.MatchFlag.MatchExactly)
+        if items:
+            column.list_widget.takeItem(column.list_widget.row(items[0]))
+            break
+    else:
+        raise AssertionError(f"variable {var_name!r} not found in any column")
+    _column(page, group_name).list_widget.addItem(var_name)
 
 
 def test_generate_without_fret_import_shows_message(qtbot, monkeypatch):
@@ -231,8 +237,8 @@ def test_clearing_a_topic_cell_falls_back_to_the_default(qtbot):
 
 
 def test_revisiting_the_page_preserves_a_topic_override(qtbot):
-    """Same rule as the group trees: an unchanged variable set must not silently discard an
-    override the user already typed in just because the page was shown again."""
+    """Same rule as the grouping widgets below: an unchanged variable set must not silently
+    discard an override the user already typed in just because the page was shown again."""
     state = _state_with_import()
     page = MonitorExportPage(state)
     qtbot.addWidget(page)
@@ -280,17 +286,17 @@ def test_on_show_displays_previously_generated_path(qtbot):
     assert "/tmp/some/pkg" in page.status_label.text()
 
 
-# -- variable grouping ----------------------------------------------------------------------
+# -- variable grouping (one column per group) ------------------------------------------------
 
 
-def test_on_show_builds_both_trees_with_everything_unassigned_for_a_fresh_import(qtbot):
+def test_on_show_builds_everything_unassigned_for_a_fresh_import(qtbot):
     page = MonitorExportPage(_state_with_three_requirements())
     qtbot.addWidget(page)
 
     page.on_show()
 
-    assert page.variable_tree.topLevelItemCount() == 1
-    assert page.variable_tree.topLevelItem(0).text(0) == _UNASSIGNED_VARIABLES
+    assert len(page._variable_columns) == 1
+    assert page._variable_columns[0].name == _UNASSIGNED_VARIABLES
     assert set(_variable_member_texts(page, _UNASSIGNED_VARIABLES)) == {"a", "b", "c", "z"}
 
     assert page.requirement_tree.topLevelItemCount() == 1
@@ -333,22 +339,25 @@ def test_on_show_preserves_manual_variable_grouping_when_set_is_unchanged(qtbot,
 
     page.on_show()
 
-    assert page.variable_tree.topLevelItemCount() == 2
-    assert any(page.variable_tree.topLevelItem(i).text(0) == "My Group" for i in range(page.variable_tree.topLevelItemCount()))
+    assert len(page._variable_columns) == 2
+    assert any(column.name == "My Group" for column in page._variable_columns)
 
 
-def test_add_group_creates_a_matching_empty_group_in_both_trees(qtbot, monkeypatch):
+def test_add_group_creates_a_matching_empty_column_and_requirement_group(qtbot, monkeypatch):
     page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
 
     _add_group(page, monkeypatch, "New Group")
 
-    assert page.variable_tree.topLevelItemCount() == 2
+    assert len(page._variable_columns) == 2
     assert page.requirement_tree.topLevelItemCount() == 2
     assert _variable_member_texts(page, "New Group") == []
     assert _requirement_member_texts(page, "New Group") == []
     assert page.export_group_combo.findText("New Group") != -1
+    # The new column sits to the right of the stretch-less layout, right before the trailing
+    # stretch item that keeps columns left-aligned.
+    assert page._variable_columns_layout.count() == 3  # pool + new group + trailing stretch
 
 
 def test_add_group_cancelled_adds_nothing(qtbot, monkeypatch):
@@ -359,7 +368,7 @@ def test_add_group_cancelled_adds_nothing(qtbot, monkeypatch):
 
     page._on_add_group_clicked()
 
-    assert page.variable_tree.topLevelItemCount() == 1
+    assert len(page._variable_columns) == 1
     assert page.requirement_tree.topLevelItemCount() == 1
 
 
@@ -374,7 +383,7 @@ def test_add_group_rejects_a_duplicate_name(qtbot, monkeypatch):
     _add_group(page, monkeypatch, "Group 1")
 
     assert called == [True]
-    assert page.variable_tree.topLevelItemCount() == 2  # unassigned pool + the one real group
+    assert len(page._variable_columns) == 2  # unassigned pool + the one real group
 
 
 def test_auto_sort_assigns_unambiguous_requirements_and_leaves_the_rest_unassigned(qtbot, monkeypatch):
@@ -414,32 +423,26 @@ def test_removing_a_variable_group_also_removes_its_requirement_group(qtbot, mon
     _move_variable_to_group(page, "a", "Group A")
     page._on_auto_sort_clicked()
     assert _requirement_member_texts(page, "Group A") == ["r1", "r3"]  # r3's other var ("b") is unassigned, not conflicting
-    group_item = next(
-        page.variable_tree.topLevelItem(i) for i in range(page.variable_tree.topLevelItemCount())
-        if page.variable_tree.topLevelItem(i).text(0) == "Group A"
-    )
-    page.variable_tree.setCurrentItem(group_item)
+    group_id = _column(page, "Group A").group_id
 
-    page._on_remove_group_clicked()
+    page._on_remove_variable_group_clicked(group_id)
 
-    assert page.variable_tree.topLevelItemCount() == 1
+    assert len(page._variable_columns) == 1
     assert page.requirement_tree.topLevelItemCount() == 1
     assert "r1" in _requirement_member_texts(page, _UNASSIGNED_REQUIREMENTS)
     assert "a" in _variable_member_texts(page, _UNASSIGNED_VARIABLES)
 
 
-def test_remove_unassigned_variables_pool_shows_message(qtbot, monkeypatch):
-    called = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
+def test_removing_an_already_gone_group_is_a_safe_no_op(qtbot):
+    """The pool column has no remove button at all (removable=False), so there's no UI path to
+    trigger this with a real group_id -- this just confirms the method itself stays defensive."""
     page = MonitorExportPage(_state_with_import())
     qtbot.addWidget(page)
     page.on_show()
-    page.variable_tree.setCurrentItem(page.variable_tree.topLevelItem(0))
 
-    page._on_remove_group_clicked()
+    page._on_remove_variable_group_clicked(999)
 
-    assert called == [True]
-    assert page.variable_tree.topLevelItemCount() == 1
+    assert len(page._variable_columns) == 1
 
 
 def test_renaming_a_variable_group_renames_its_requirement_group_and_export_selector(qtbot, monkeypatch):
@@ -447,17 +450,32 @@ def test_renaming_a_variable_group_renames_its_requirement_group_and_export_sele
     qtbot.addWidget(page)
     page.on_show()
     _add_group(page, monkeypatch, "Original Name")
-    group_item = next(
-        page.variable_tree.topLevelItem(i) for i in range(page.variable_tree.topLevelItemCount())
-        if page.variable_tree.topLevelItem(i).text(0) == "Original Name"
-    )
+    group_id = _column(page, "Original Name").group_id
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("Renamed", True))
 
-    group_item.setText(0, "Renamed")
-    page._on_variable_group_renamed(group_item, 0)
+    page._on_rename_variable_group_clicked(group_id)
 
     assert page.export_group_combo.findText("Renamed") != -1
     assert page.export_group_combo.findText("Original Name") == -1
     assert _requirement_member_texts(page, "Renamed") == []
+    assert _column(page, "Renamed").header_label.text() == "Renamed"
+
+
+def test_renaming_a_variable_group_rejects_a_duplicate_name(qtbot, monkeypatch):
+    called = []
+    page = MonitorExportPage(_state_with_import())
+    qtbot.addWidget(page)
+    page.on_show()
+    _add_group(page, monkeypatch, "Group 1")
+    _add_group(page, monkeypatch, "Group 2")
+    group_2_id = _column(page, "Group 2").group_id
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("Group 1", True))
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: called.append(True))
+
+    page._on_rename_variable_group_clicked(group_2_id)
+
+    assert called == [True]
+    assert _column(page, "Group 2").name == "Group 2"  # unchanged
 
 
 def test_export_group_selector_only_lists_custom_groups(qtbot, monkeypatch):
@@ -469,6 +487,39 @@ def test_export_group_selector_only_lists_custom_groups(qtbot, monkeypatch):
     names = [page.export_group_combo.itemText(i) for i in range(page.export_group_combo.count())]
 
     assert names == ["Group 1"]
+
+
+def test_variable_column_list_drop_event_moves_the_item_between_columns(qtbot):
+    """_VariableColumnList overrides dropEvent so a drag between two columns actually moves the
+    item -- Qt's own cross-widget default is to copy it, leaving a duplicate behind, which this
+    confirms doesn't happen. A full native drag can't be simulated headlessly, so this calls
+    dropEvent directly with a minimal stand-in that provides what it actually reads
+    (source()/acceptProposedAction())."""
+    class _FakeDropEvent:
+        def __init__(self, source):
+            self._source = source
+            self.accepted = False
+
+        def source(self):
+            return self._source
+
+        def acceptProposedAction(self):
+            self.accepted = True
+
+    source_list = _VariableColumnList()
+    qtbot.addWidget(source_list)
+    target_list = _VariableColumnList()
+    qtbot.addWidget(target_list)
+    source_list.addItem("a")
+    source_list.addItem("b")
+    source_list.setCurrentRow(0)  # selects "a"
+
+    event = _FakeDropEvent(source_list)
+    target_list.dropEvent(event)
+
+    assert [source_list.item(i).text() for i in range(source_list.count())] == ["b"]
+    assert [target_list.item(i).text() for i in range(target_list.count())] == ["a"]
+    assert event.accepted is True
 
 
 # -- click-to-popup --------------------------------------------------------------------------
