@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QStyledItemDelegate,
     QTreeWidget,
     QTreeWidgetItem,
-    QTreeWidgetItemIterator,
     QVBoxLayout,
 )
 
@@ -43,6 +43,29 @@ _FORMULA_VIEW_SETTING = "split/formula_view"
 # future-time formula, and showing both side by side makes long formulas hard to read.
 _FORMULA_VIEWS = (("pt", "ptLTL"), ("ft", "ftLTL"), ("both", "Both"))
 _FORMULA_STYLE = "font-family: monospace;"
+
+
+class _SearchHighlightDelegate(QStyledItemDelegate):
+    """Paints a row's background directly, bypassing QTreeWidgetItem.setBackground() --
+    confirmed (by rendering the real widget off-screen and sampling pixels, not just reading
+    back what was set) that theme.py's global `QTreeWidget::item { ... }` stylesheet rule makes
+    Qt silently ignore Qt::BackgroundRole for every item once any rule matches that sub-control,
+    so a per-item setBackground() call has no visible effect at all even though
+    item.background() still faithfully reports the color that was "set". Reads
+    `is_highlighted` fresh on every paint, so the caller only needs to trigger a repaint
+    (`tree.viewport().update()`) when the highlighted set changes -- no per-item bookkeeping."""
+
+    def __init__(self, is_highlighted, parent=None):
+        super().__init__(parent)
+        self._is_highlighted = is_highlighted
+
+    def paint(self, painter, option, index) -> None:
+        reqid = index.sibling(index.row(), 0).data(Qt.ItemDataRole.UserRole)
+        if reqid is not None and self._is_highlighted(reqid):
+            painter.save()
+            painter.fillRect(option.rect, QColor(theme_manager.palette.warning_soft))
+            painter.restore()
+        super().paint(painter, option, index)
 
 
 class ImportSplitPage(WizardPage):
@@ -136,6 +159,9 @@ class ImportSplitPage(WizardPage):
         self.requirement_tree = QTreeWidget()
         self.requirement_tree.setColumnCount(2)
         self.requirement_tree.setHeaderLabels(["Requirement", "Assumption"])
+        self.requirement_tree.setItemDelegate(
+            _SearchHighlightDelegate(lambda reqid: reqid in self.state.recommended_split_reqids, self.requirement_tree)
+        )
         self.requirement_tree.currentItemChanged.connect(self._on_requirement_selected)
         self.requirement_tree.itemChanged.connect(self._on_assumption_toggled)
         left.addWidget(self.requirement_tree)
@@ -282,7 +308,6 @@ class ImportSplitPage(WizardPage):
                 item.setToolTip(0, req.fulltext)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(1, Qt.CheckState.Checked if req.is_assumption else Qt.CheckState.Unchecked)
-                self._apply_search_highlight(item)
                 items_by_reqid[req.reqid] = item
             for req in self.state.fret_import.requirements:
                 item = items_by_reqid[req.reqid]
@@ -305,23 +330,13 @@ class ImportSplitPage(WizardPage):
                 self.requirement_tree.setCurrentItem(item)
                 return
 
-    def _apply_search_highlight(self, item: QTreeWidgetItem) -> None:
-        reqid = item.data(0, Qt.ItemDataRole.UserRole)
-        flagged = reqid in self.state.recommended_split_reqids
-        color = QColor(theme_manager.palette.warning_soft) if flagged else QColor(Qt.GlobalColor.transparent)
-        for column in range(self.requirement_tree.columnCount()):
-            item.setBackground(column, color)
-
     def _refresh_requirement_tree_highlights(self) -> None:
-        """Re-colors every existing tree item in place from `state.recommended_split_reqids`,
-        without rebuilding the tree (which would lose the current selection/scroll position) --
-        used both after a single accept/reject and, incrementally, during a search batch."""
-        iterator = QTreeWidgetItemIterator(self.requirement_tree)
-        item = iterator.value()
-        while item is not None:
-            self._apply_search_highlight(item)
-            iterator += 1
-            item = iterator.value()
+        """Repaints the tree so rows pick up the current `state.recommended_split_reqids` --
+        _SearchHighlightDelegate reads that set fresh on every paint, so nothing needs to be
+        recomputed per item here, just a redraw triggered. Used after a single accept/reject
+        and, incrementally, during a search batch; a full `_refresh_requirement_tree` rebuild
+        already repaints on its own and doesn't need this too."""
+        self.requirement_tree.viewport().update()
 
     def _on_assumption_toggled(self, item: QTreeWidgetItem, column: int) -> None:
         """Flips `is_assumption` on the underlying requirement in memory -- affects the current

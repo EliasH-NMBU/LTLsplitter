@@ -1,14 +1,12 @@
 import json
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from ltlsplitter.core.fret_import import import_fret_file
 from ltlsplitter.core.models import FretImport, FretRequirement, SplitSuggestion, SubFormula, Variable, VariableType
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.import_split import ImportSplitPage
-from ltlsplitter.gui.theme import theme_manager
 
 
 def _wait_for_llm(qtbot, page) -> None:
@@ -32,9 +30,13 @@ def _state_with_import() -> ProjectState:
     return ProjectState(fret_import=fret_import)
 
 
-def _tree_item_color(page: ImportSplitPage, reqid: str) -> QColor:
-    items = page.requirement_tree.findItems(reqid, Qt.MatchFlag.MatchRecursive, 0)
-    return items[0].background(0).color()
+def _is_painted_highlighted(page: ImportSplitPage, reqid: str) -> bool:
+    """What _SearchHighlightDelegate.paint() actually decides for this reqid -- not
+    item.background(), which QTreeWidgetItem.setBackground() can no longer be used to drive at
+    all (theme.py's global stylesheet makes Qt ignore Qt::BackgroundRole once any rule matches
+    QTreeWidget::item, confirmed by rendering the real widget off-screen and sampling pixels --
+    item.background() would keep "working" and silently test nothing)."""
+    return page.requirement_tree.itemDelegate()._is_highlighted(reqid)
 
 
 def _write_fret_file(tmp_path, reqid="r1", fulltext="the system shall...") -> str:
@@ -744,8 +746,8 @@ def test_search_flags_only_requirements_the_llm_recommends_splitting(qtbot, monk
     qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
 
     assert state.recommended_split_reqids == {"r1"}
-    assert _tree_item_color(page, "r1") == QColor(theme_manager.palette.warning_soft)
-    assert _tree_item_color(page, "r2") == QColor(Qt.GlobalColor.transparent)
+    assert _is_painted_highlighted(page, "r1") is True
+    assert _is_painted_highlighted(page, "r2") is False
     assert page.search_button.text() == "LTLsplit search"
     assert page.search_button.isEnabled()
 
@@ -770,7 +772,7 @@ def test_accepting_a_split_clears_its_highlight(qtbot, monkeypatch):
     qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
 
     assert state.recommended_split_reqids == {"r2"}  # r1's decision is made, r2's is untouched
-    assert _tree_item_color(page, "r2") == QColor(theme_manager.palette.warning_soft)
+    assert _is_painted_highlighted(page, "r2") is True
 
 
 def test_rejecting_a_split_clears_its_highlight(qtbot):
@@ -784,8 +786,8 @@ def test_rejecting_a_split_clears_its_highlight(qtbot):
     page._on_reject_clicked()
 
     assert state.recommended_split_reqids == {"r2"}
-    assert _tree_item_color(page, "r1") == QColor(Qt.GlobalColor.transparent)
-    assert _tree_item_color(page, "r2") == QColor(theme_manager.palette.warning_soft)
+    assert _is_painted_highlighted(page, "r1") is False
+    assert _is_painted_highlighted(page, "r2") is True
 
 
 def test_search_stops_and_reports_missing_api_key(qtbot, monkeypatch):
