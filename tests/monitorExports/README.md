@@ -27,11 +27,18 @@ The script infers overload instead from two external symptoms: handler-event thr
 to keep scaling with the publish rate, and handler events arriving in bursty, uneven gaps. Both
 are reported per rate step (and in the CSV) rather than collapsed into a single pass/fail.
 
-**This was written and reasoned through carefully, but never run end to end** -- the LTLsplitter
-dev sandbox it was written in has no ROS2 install at all. `parse_monitor_interface` (the one
-part that doesn't need ROS2) *was* verified directly against the real `Group_1`/`Group_2` files
-here -- see `tests/test_load_test.py` in the main test suite. The `rclpy`-dependent parts
-(`LoadTestNode`, `run_rate_step`, `main`) follow the standard documented API but weren't
-exercised; sanity-check the first rate step's output in your real environment (the same
-Docker/screen session as the "Copilot RV" pane -- see `Group_1/screenrc`) before trusting a full
-run.
+**Validated against a real rclpy node, not just reasoned through** -- ROS 2 Lyrical Luth was
+installed in the LTLsplitter dev sandbox afterwards (it has Tier 1 support for this machine's
+Ubuntu 26.04), and this was run end to end against a throwaway stand-in node at several rates,
+including a zero-handler-events case: publish counts matched the target rate exactly every time,
+and it shut down and wrote its CSV cleanly. That run caught one real bug, now fixed:
+`LoadTestNode` originally named its own tracking dicts `self._publishers`/`self._subscriptions`,
+which silently collide with rclpy's own `Node` internals of the same name and crashed
+`destroy_node()`. `parse_monitor_interface` (the part that doesn't need ROS2 at all) was
+additionally verified directly against the real `Group_1`/`Group_2` files here -- see
+`tests/test_load_test.py` in the main test suite.
+
+It has **not** been run against the real compiled `copilot` monitor -- that needs the
+Haskell/colcon toolchain the Docker image builds with, which isn't set up in this sandbox.
+Sanity-check the first rate step's output against a real monitor (the same Docker/screen session
+as the "Copilot RV" pane -- see `Group_1/screenrc`) before trusting a full run there.

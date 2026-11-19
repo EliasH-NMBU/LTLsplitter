@@ -24,14 +24,17 @@ WHY THIS APPROACH (read before changing the methodology):
     black-box signal a real deployment would have to rely on too, since nothing here can see
     inside the monitor's own subscription queue.
 
-CAVEAT -- READ THIS: this script was written and reasoned through carefully, but it was never
-run end to end -- the LTLsplitter dev sandbox this was written in has no ROS2 / rclpy install
-at all (confirmed: `import rclpy` fails, `ros2` isn't on PATH). The topic/type discovery
-(parse_monitor_interface) WAS verified directly against the real Group_1/Group_2
-copilot_monitor.cpp files and correctly found all 7 inputs and 13/9 handler topics in each. The
-rclpy usage below follows the standard, documented API, but run it against a real monitor (in
-the same Docker/screen session as the "Copilot RV" pane -- see ../screenrc) and sanity-check the
-first rate step's output before trusting a full run.
+VALIDATED: once ROS 2 (Lyrical Luth) was actually installed, this was run end to end against a
+real rclpy node (a throwaway stand-in publishing on one of Group_1's real handler topics) at
+several rates, including a zero-handler-events case -- publish counts matched the target rate
+exactly every time, and it shut down and wrote its CSV cleanly. That run caught one real bug,
+now fixed: LoadTestNode originally named its own tracking dicts `self._publishers`/
+`self._subscriptions`, which silently collide with rclpy's own `Node` internals of the same
+name -- publishing/subscribing worked fine, but `destroy_node()` crashed with a `KeyError`
+reading what it expected to be its own bookkeeping. It still has NOT been run against the real
+compiled "copilot" monitor (the Haskell/colcon toolchain that builds it isn't set up here) --
+sanity-check the first rate step's output against a real monitor (in the same Docker/screen
+session as the "Copilot RV" pane -- see ../screenrc) before trusting a full run there.
 
 Usage (inside the ROS2 environment the monitor itself runs in, e.g. the Dockerfile's
 spaceros-user container, with this monitor's "copilot" node already running separately):
@@ -140,12 +143,18 @@ class LoadTestNode(Node):
         super().__init__("monitor_load_test")
         self._int_max = int_max
         self._input_types = dict(interface.inputs)
-        self._publishers = {
+        # Named _input_publishers/_handler_subscriptions, not _publishers/_subscriptions --
+        # confirmed the hard way (a real run against a real node) that those two names collide
+        # with rclpy's own Node bookkeeping of the same names: this still publishes/subscribes
+        # fine day to day, since nothing reads rclpy's internal copies during normal operation,
+        # but destroy_node() reads its own _publishers expecting its own bookkeeping and crashes
+        # (KeyError) once this subclass has silently replaced it.
+        self._input_publishers = {
             topic: self.create_publisher(_MSG_TYPES[type_name], topic, 10)
             for topic, type_name in interface.inputs
         }
         self._handler_stats: dict[str, _HandlerStats] = {h: _HandlerStats() for h in interface.handlers}
-        self._subscriptions = [
+        self._handler_subscriptions = [
             self.create_subscription(Empty, topic, self._make_handler_callback(topic), 10)
             for topic in interface.handlers
         ]
@@ -162,7 +171,7 @@ class LoadTestNode(Node):
         requested rate is measured in, matching how the monitor's own step() function re-
         evaluates every property on every single variable update regardless of which variable
         changed."""
-        for topic, publisher in self._publishers.items():
+        for topic, publisher in self._input_publishers.items():
             msg_type = _MSG_TYPES[self._input_types[topic]]
             msg = msg_type()
             msg.data = _random_value(self._input_types[topic], self._int_max)
