@@ -189,8 +189,14 @@ class LoadTestNode(Node):
 @dataclass
 class StepResult:
     target_rate_hz: float
+    """A "round" rate, NOT a message rate -- see run_rate_step's docstring. One round publishes
+    one fresh value to every input topic, so the real message rate is round_rate * num_inputs,
+    and the real requirement-check rate (every requirement is re-evaluated on every single
+    message, confirmed in copilot_monitor.cpp: each variable's own callback calls step()) is
+    round_rate * num_inputs * num_requirements -- see requirement_checks_per_sec below."""
     actual_rate_hz: float
     published: int
+    requirement_checks_per_sec: float
     handler_events: int
     handler_event_rate_hz: float
     mean_inter_arrival_ms: float | None
@@ -198,10 +204,19 @@ class StepResult:
     max_inter_arrival_ms: float | None
 
 
-def run_rate_step(node: LoadTestNode, rate_hz: float, duration_s: float) -> StepResult:
+def run_rate_step(
+    node: LoadTestNode, rate_hz: float, duration_s: float, num_inputs: int, num_requirements: int,
+) -> StepResult:
     """Publishes one round per 1/rate_hz seconds for duration_s seconds, spinning the node's
     executor between publishes so handler callbacks are processed as soon as they arrive rather
-    than only in a batch at the end (which would distort the inter-arrival timings below)."""
+    than only in a batch at the end (which would distort the inter-arrival timings below).
+
+    "One round" = one fresh value sent to each of num_inputs topics, each of which independently
+    triggers a step() call on the monitor side (confirmed in copilot_monitor.cpp: every
+    variable's callback calls step()), and each step() call re-evaluates every one of
+    num_requirements registered properties at once. So the actual load on the monitor is
+    num_inputs * num_requirements times higher than the round rate alone suggests -- that's
+    requirement_checks_per_sec in the result, not just actual_rate_hz."""
     node.reset_handler_stats()
     interval = 1.0 / rate_hz
     deadline = time.monotonic() + duration_s
@@ -220,10 +235,12 @@ def run_rate_step(node: LoadTestNode, rate_hz: float, duration_s: float) -> Step
     all_timestamps = sorted(ts for stats in node.handler_stats().values() for ts in stats.timestamps)
     total_handler_events = len(all_timestamps)
     gaps_ms = [(b - a) * 1000.0 for a, b in zip(all_timestamps, all_timestamps[1:])]
+    actual_rate_hz = published / duration_s
     return StepResult(
         target_rate_hz=rate_hz,
-        actual_rate_hz=published / duration_s,
+        actual_rate_hz=actual_rate_hz,
         published=published,
+        requirement_checks_per_sec=actual_rate_hz * num_inputs * num_requirements,
         handler_events=total_handler_events,
         handler_event_rate_hz=total_handler_events / duration_s,
         mean_inter_arrival_ms=statistics.mean(gaps_ms) if gaps_ms else None,
@@ -284,10 +301,11 @@ def main() -> None:
     try:
         for rate in (float(r) for r in args.rates.split(",")):
             print(f"\n--- target rate: {rate:g} Hz ---")
-            result = run_rate_step(node, rate, args.duration)
+            result = run_rate_step(node, rate, args.duration, len(interface.inputs), len(interface.handlers))
             results.append(result)
             print(
-                f"published={result.published} actual={result.actual_rate_hz:.1f}Hz  "
+                f"published={result.published} rounds ({result.actual_rate_hz:.1f}Hz) = "
+                f"{result.requirement_checks_per_sec:.0f} requirement-checks/s  "
                 f"handler_events={result.handler_events} ({result.handler_event_rate_hz:.1f}/s)  "
                 f"inter-arrival mean={result.mean_inter_arrival_ms}ms p95={result.p95_inter_arrival_ms}ms "
                 f"max={result.max_inter_arrival_ms}ms"

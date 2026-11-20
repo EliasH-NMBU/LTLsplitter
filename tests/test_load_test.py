@@ -1,9 +1,10 @@
 """Tests for monitorExports/load_test.py's pure-Python parts (topic/type discovery and the
-load-math/reporting logic) -- the parts that don't actually need a live ROS2 install, which this
-dev sandbox doesn't have at all (confirmed: `import rclpy` fails here). The script itself is
-structured so importing it doesn't require rclpy either (see its own top-of-file comment), which
-is what makes this test file possible; the rclpy-dependent parts (LoadTestNode, run_rate_step,
-main) are NOT exercised here and were never run end to end -- see the script's own caveat."""
+load-math/reporting logic) -- the parts that don't need a live ROS2 install, which is what makes
+this test file able to run inside the plain LTLsplitter dev environment. The rclpy-dependent
+parts (LoadTestNode, run_rate_step, main) are NOT exercised here -- they're covered separately,
+against a real ROS 2 install and the real compiled "copilot" monitor (see the script's own
+VALIDATED note at the top of load_test.py for what that confirmed, including a real bug it
+caught)."""
 
 import csv
 import importlib.util
@@ -32,6 +33,19 @@ def _load_module():
 @pytest.fixture(scope="module")
 def load_test():
     return _load_module()
+
+
+def _step_result(load_test_module, **overrides):
+    """Builds a StepResult with sensible defaults, overridden per test -- keyword-only so these
+    tests don't break every time a field is added to StepResult (confirmed this isn't
+    hypothetical: adding requirement_checks_per_sec broke every positionally-built one here)."""
+    defaults = dict(
+        target_rate_hz=10.0, actual_rate_hz=10.0, published=50, requirement_checks_per_sec=4550.0,
+        handler_events=40, handler_event_rate_hz=8.0, mean_inter_arrival_ms=10.0,
+        p95_inter_arrival_ms=15.0, max_inter_arrival_ms=20.0,
+    )
+    defaults.update(overrides)
+    return load_test_module.StepResult(**defaults)
 
 
 def test_module_imports_without_a_ros2_install(load_test):
@@ -82,8 +96,11 @@ def test_random_value_unsigned_int_is_never_negative(load_test):
 def test_saturation_hint_flags_a_flatlining_handler_rate(load_test, capsys):
     """Publish rate jumps 100x but the handler-event rate barely moves -- the monitor isn't
     keeping up with the extra load."""
-    healthy = load_test.StepResult(10, 10, 50, 40, 8, 10, 15, 20)
-    flatlined = load_test.StepResult(1000, 1000, 5000, 42, 8.4, 10, 15, 20)
+    healthy = _step_result(load_test)
+    flatlined = _step_result(
+        load_test, target_rate_hz=1000, actual_rate_hz=1000, published=5000,
+        requirement_checks_per_sec=455000, handler_events=42, handler_event_rate_hz=8.4,
+    )
 
     load_test._print_saturation_hint([healthy, flatlined])
 
@@ -91,8 +108,11 @@ def test_saturation_hint_flags_a_flatlining_handler_rate(load_test, capsys):
 
 
 def test_saturation_hint_does_not_flag_proportional_scaling(load_test, capsys):
-    healthy_low = load_test.StepResult(10, 10, 50, 40, 8, 10, 15, 20)
-    healthy_high = load_test.StepResult(100, 100, 500, 400, 80, 10, 15, 20)
+    healthy_low = _step_result(load_test)
+    healthy_high = _step_result(
+        load_test, target_rate_hz=100, actual_rate_hz=100, published=500,
+        requirement_checks_per_sec=45500, handler_events=400, handler_event_rate_hz=80,
+    )
 
     load_test._print_saturation_hint([healthy_low, healthy_high])
 
@@ -100,7 +120,7 @@ def test_saturation_hint_does_not_flag_proportional_scaling(load_test, capsys):
 
 
 def test_step_results_round_trip_through_csv(load_test, tmp_path):
-    result = load_test.StepResult(10, 10, 50, 40, 8, 10.0, 15.0, 20.0)
+    result = _step_result(load_test)
     out = tmp_path / "out.csv"
     with out.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[field.name for field in fields(load_test.StepResult)])
