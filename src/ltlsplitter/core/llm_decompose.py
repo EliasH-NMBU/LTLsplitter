@@ -6,6 +6,7 @@ import os
 import anthropic
 
 from ltlsplitter.core.models import SplitSuggestion, SubFormula
+from ltlsplitter.core.refactoring_catalogue import OPPORTUNITIES, REFACTORING_GUIDANCE
 
 _MODEL = "claude-opus-5"
 
@@ -18,13 +19,18 @@ _SUGGEST_SCHEMA = {
             "monitorable obligations and would benefit from being split into sub-properties.",
         },
         "rationale": {"type": "string"},
+        "refactoring_opportunity": {
+            "type": "string",
+            "enum": list(OPPORTUNITIES),
+            "description": "Which refactoring opportunity from the catalogue applies.",
+        },
         "suggested_count": {
             "type": "integer",
             "description": "How many sub-formulas to split into, if should_split is true. "
             "1 if should_split is false.",
         },
     },
-    "required": ["should_split", "rationale", "suggested_count"],
+    "required": ["should_split", "rationale", "refactoring_opportunity", "suggested_count"],
     "additionalProperties": False,
 }
 
@@ -34,7 +40,9 @@ _SUGGEST_SYSTEM_PROMPT = (
     "clearer and easier to runtime-monitor as separate sub-properties, versus being already "
     "atomic. Be conservative: only recommend a split when the formula's top-level structure "
     "genuinely separates (e.g. a conjunction of unrelated consequents), not just because it's "
-    "long or deeply nested."
+    "long or deeply nested -- but also recognize splits that follow from logical laws (disjunctive "
+    "triggers, biconditionals) even when no conjunction is written. Name the refactoring "
+    "opportunity you identified.\n\n" + REFACTORING_GUIDANCE
 )
 
 _DECOMPOSE_SCHEMA = {
@@ -73,7 +81,8 @@ _DECOMPOSE_SYSTEM_PROMPT = (
     "forms do. The conjunction of all sub-formulas' past-time forms must be logically "
     "equivalent to the original past-time formula (and likewise for the future-time forms), and "
     "no single sub-formula may by itself already express the entire original formula's logic -- "
-    "that would not be a genuine split. Don't invent obligations not present in the original."
+    "that would not be a genuine split. Don't invent obligations not present in the original.\n\n"
+    + REFACTORING_GUIDANCE
 )
 
 
@@ -108,6 +117,7 @@ def suggest_split(pt_formula: str, ft_formula: str, api_key: str | None = None) 
         should_split=data["should_split"],
         rationale=data["rationale"],
         suggested_count=max(1, int(data["suggested_count"])),
+        refactoring_opportunity=data.get("refactoring_opportunity", ""),
     )
 
 

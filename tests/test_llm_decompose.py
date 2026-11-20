@@ -92,3 +92,36 @@ def test_force_split_prompt_states_there_is_no_fixed_target_count(monkeypatch):
 
     prompt = client.messages.calls[0]["messages"][0]["content"]
     assert "no fixed target count" in prompt
+
+
+def test_suggest_split_reports_the_refactoring_opportunity(monkeypatch):
+    from ltlsplitter.core.llm_decompose import suggest_split
+
+    client = _patch_client(monkeypatch, {
+        "should_split": True, "rationale": "two outputs",
+        "refactoring_opportunity": "large_requirement", "suggested_count": 2,
+    })
+
+    result = suggest_split("(H (p -> (a & b)))", "(G (p -> (a & b)))", api_key="sk-test")
+
+    assert result.refactoring_opportunity == "large_requirement"
+    assert "Extract Requirement" in client.messages.calls[0]["system"]
+
+
+def test_decompose_prompt_includes_the_refactoring_catalogue(monkeypatch):
+    client = _patch_client(monkeypatch, {
+        "sub_formulas": [
+            {"pt_formula": "(H a)", "ft_formula": "(G a)"},
+            {"pt_formula": "(H b)", "ft_formula": "(G b)"},
+        ],
+    })
+
+    decompose("r1", "(H (a & b))", "(G (a & b))", count=None, api_key="sk-test")
+
+    system = client.messages.calls[0]["system"]
+    assert "lazy_requirement" in system and "Extract Alternative Flows" in system
+
+
+def test_suggest_schema_has_no_unsupported_min_items():
+    from ltlsplitter.core.llm_decompose import _SUGGEST_SCHEMA
+    assert "minItems" not in json.dumps(_SUGGEST_SCHEMA)

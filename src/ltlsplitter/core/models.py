@@ -117,6 +117,9 @@ class SplitSuggestion:
     should_split: bool
     rationale: str
     suggested_count: int = 1
+    refactoring_opportunity: str = ""
+    """Which opportunity from core/refactoring_catalogue.py the LLM identified, e.g.
+    "large_requirement" or "lazy_requirement"."""
 
 
 @dataclass

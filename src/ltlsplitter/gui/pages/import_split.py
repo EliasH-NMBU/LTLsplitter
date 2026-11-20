@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ltlsplitter.core.complexity import formula_complexity
 from ltlsplitter.core.fret_import import InvalidFretFileError, append_sub_formulas_and_save, import_fret_file
 from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose, suggest_split
 from ltlsplitter.core.models import FretRequirement, SubFormula
@@ -198,6 +199,11 @@ class ImportSplitPage(WizardPage):
         self.variables_label.setWordWrap(True)
         right.addWidget(self.variables_label)
 
+        self.complexity_label = QLabel()
+        self.complexity_label.setWordWrap(True)
+        self.complexity_label.setToolTip("Complexity = number of operators + 0.5 x number of distinct variables.")
+        right.addWidget(self.complexity_label)
+
         self.suggest_button = compact(QPushButton("Suggest Split (LLM)"))
         self.suggest_button.clicked.connect(self._on_suggest_clicked)
         right.addWidget(self.suggest_button)
@@ -231,6 +237,10 @@ class ImportSplitPage(WizardPage):
         self.reference_label = QLabel()
         self.reference_label.setWordWrap(True)
         right.addWidget(self.reference_label)
+
+        self.decomposition_complexity_label = QLabel()
+        self.decomposition_complexity_label.setWordWrap(True)
+        right.addWidget(self.decomposition_complexity_label)
 
         body.addLayout(right, 2)
         self.content_layout.addLayout(body)
@@ -427,11 +437,52 @@ class ImportSplitPage(WizardPage):
         if req is None:
             self.formula_label.setText("(select a requirement)")
             self.variables_label.clear()
+            self.complexity_label.clear()
             self._refresh_sub_formula_list()
             return
         self.formula_label.setText(self._format_formulas(req.pt_formula, req.ft_formula, multiline=True))
         self.variables_label.setText(", ".join(req.variable_names) or "(none referenced)")
+        self.complexity_label.setText("Complexity: " + self._complexity_text(req.pt_formula, req.ft_formula))
         self._refresh_sub_formula_list()
+
+    def _declared_names(self) -> set[str] | None:
+        if not self.state.fret_import:
+            return None
+        return {v.name for v in self.state.fret_import.variables}
+
+    def _complexity_text(self, pt: str, ft: str) -> str:
+        """e.g. "pt 12.5 (11 operators, 3 variables) | ft 12.5 (...)" -- only the forms that
+        exist, since an .smv import fills just one of pt/ft."""
+        declared = self._declared_names()
+        parts = []
+        for label, formula in (("pt", pt), ("ft", ft)):
+            if formula:
+                c = formula_complexity(formula, declared)
+                parts.append(f"{label} {c.score:g} ({c.operators} operators, {c.variables} variables)")
+        return " | ".join(parts) or "(no formula)"
+
+    def _refresh_decomposition_complexity(self, req, sub_formulas) -> None:
+        """Compares the original's complexity with the parts' -- the largest part is what a
+        split actually buys (each monitor/check gets smaller), the sum shows the overhead."""
+        if req is None or len(sub_formulas) < 2:
+            self.decomposition_complexity_label.clear()
+            return
+        declared = self._declared_names()
+        lines = []
+        for label, original, parts in (
+            ("pt", req.pt_formula, [s.pt_formula for s in sub_formulas]),
+            ("ft", req.ft_formula, [s.ft_formula for s in sub_formulas]),
+        ):
+            if not original or not all(parts):
+                continue
+            scores = [formula_complexity(f, declared).score for f in parts]
+            lines.append(
+                f"{label}: original {formula_complexity(original, declared).score:g} -> parts "
+                f"{', '.join(f'{x:g}' for x in scores)} (max {max(scores):g}, sum {sum(scores):g})"
+            )
+        self.decomposition_complexity_label.setText(
+            "Decomposition complexity -- " + "; ".join(lines) if lines else ""
+        )
 
     # -- ptLTL / ftLTL view -------------------------------------------------------------
 
@@ -507,8 +558,10 @@ class ImportSplitPage(WizardPage):
             return  # selection changed meanwhile -- stale answer
         self.state.split_suggestion = suggestion
         verdict = "Split recommended" if suggestion.should_split else "No split recommended"
+        opportunity = suggestion.refactoring_opportunity.replace("_", " ")
+        opportunity_text = f" [{opportunity}]" if opportunity and opportunity != "none" else ""
         self.suggestion_label.setText(
-            f"{verdict} (suggested {suggestion.suggested_count} part(s)): {suggestion.rationale}"
+            f"{verdict}{opportunity_text} (suggested {suggestion.suggested_count} part(s)): {suggestion.rationale}"
         )
         self.force_split_button.setVisible(not suggestion.should_split)
 
@@ -674,12 +727,16 @@ class ImportSplitPage(WizardPage):
         self.sub_formula_list.clear()
         for sub in self.state.active_sub_formulas():
             item = QListWidgetItem(f"{sub.id} | {self._format_formulas(sub.pt_formula, sub.ft_formula)}")
-            item.setToolTip(f"pt: {sub.pt_formula}\nft: {sub.ft_formula}")
+            item.setToolTip(
+                f"pt: {sub.pt_formula}\nft: {sub.ft_formula}\n"
+                f"Complexity: {self._complexity_text(sub.pt_formula, sub.ft_formula)}"
+            )
             item.setData(Qt.ItemDataRole.UserRole, sub.id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
             self.sub_formula_list.addItem(item)
         self.sub_formula_list.blockSignals(False)
         self._refresh_reference_check()
+        self._refresh_decomposition_complexity(self._selected_requirement(), self.state.active_sub_formulas())
 
     def _on_sub_formula_edited(self, item: QListWidgetItem) -> None:
         """Lets the user hand-correct a sub-formula in place. The text is "id | <formula>" when
@@ -706,10 +763,14 @@ class ImportSplitPage(WizardPage):
                 ft_formula = ft_part.strip()
             self.state.sub_formulas[i] = SubFormula(id=sub_id, pt_formula=pt_formula, ft_formula=ft_formula)
             self.sub_formula_list.blockSignals(True)  # setToolTip would re-emit itemChanged
-            item.setToolTip(f"pt: {pt_formula}\nft: {ft_formula}")
+            item.setToolTip(
+                f"pt: {pt_formula}\nft: {ft_formula}\n"
+                f"Complexity: {self._complexity_text(pt_formula, ft_formula)}"
+            )
             self.sub_formula_list.blockSignals(False)
             break
         self._refresh_reference_check()
+        self._refresh_decomposition_complexity(self._selected_requirement(), self.state.active_sub_formulas())
 
     def _refresh_reference_check(self) -> None:
         if not self.state.fret_import:
