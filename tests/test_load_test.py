@@ -41,8 +41,7 @@ def _step_result(load_test_module, **overrides):
     hypothetical: adding requirement_checks_per_sec broke every positionally-built one here)."""
     defaults = dict(
         target_rate_hz=10.0, actual_rate_hz=10.0, published=50, requirement_checks_per_sec=4550.0,
-        handler_events=40, handler_event_rate_hz=8.0, mean_inter_arrival_ms=10.0,
-        p95_inter_arrival_ms=15.0, max_inter_arrival_ms=20.0,
+        handler_events=40, handler_event_rate_hz=8.0,
     )
     defaults.update(overrides)
     return load_test_module.StepResult(**defaults)
@@ -130,7 +129,7 @@ def test_step_results_round_trip_through_csv(load_test, tmp_path):
     rows = list(csv.DictReader(out.open()))
 
     assert rows[0]["handler_events"] == "40"
-    assert rows[0]["mean_inter_arrival_ms"] == "10.0"
+    assert rows[0]["requirement_checks_per_sec"] == "4550.0"
 
 
 def test_main_fails_clearly_without_ros2(load_test, monkeypatch):

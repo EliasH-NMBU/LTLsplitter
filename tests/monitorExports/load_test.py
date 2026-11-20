@@ -13,28 +13,34 @@ WHY THIS APPROACH (read before changing the methodology):
     publishes were dropped before reaching the monitor's queue, and the monitor's own code
     can't be changed to add instrumentation without it being overwritten the next time it's
     regenerated. So "the queue filled up" isn't observed directly here -- it's inferred from
-    two externally-observable symptoms instead, both computed per rate step below:
-      1. handler_event_rate_hz stops growing roughly in step with the publish rate (or drops)
-         while the publish rate keeps climbing -- fewer of the monitor's own evaluations are
-         producing a result than the input rate alone would predict.
-      2. the gaps between consecutive handler events get bursty (rising p95/max inter-arrival
-         time versus the mean) -- a sign the executor is processing messages in backlog bursts
-         rather than keeping pace.
-    Neither is a precise "N messages dropped" count. Both are the same kind of external,
-    black-box signal a real deployment would have to rely on too, since nothing here can see
-    inside the monitor's own subscription queue.
+    one externally-observable symptom instead, computed per rate step below: handler_event_rate_hz
+    stops growing roughly in step with the publish rate (or drops) while the publish rate keeps
+    climbing -- fewer of the monitor's own evaluations are producing a result than the input
+    rate alone would predict. That's not a precise "N messages dropped" count -- it's the same
+    kind of external, black-box signal a real deployment would have to rely on too, since
+    nothing here can see inside the monitor's own subscription queue.
 
-VALIDATED: once ROS 2 (Lyrical Luth) was actually installed, this was run end to end against a
-real rclpy node (a throwaway stand-in publishing on one of Group_1's real handler topics) at
-several rates, including a zero-handler-events case -- publish counts matched the target rate
-exactly every time, and it shut down and wrote its CSV cleanly. That run caught one real bug,
-now fixed: LoadTestNode originally named its own tracking dicts `self._publishers`/
-`self._subscriptions`, which silently collide with rclpy's own `Node` internals of the same
-name -- publishing/subscribing worked fine, but `destroy_node()` crashed with a `KeyError`
-reading what it expected to be its own bookkeeping. It still has NOT been run against the real
-compiled "copilot" monitor (the Haskell/colcon toolchain that builds it isn't set up here) --
-sanity-check the first rate step's output against a real monitor (in the same Docker/screen
-session as the "Copilot RV" pane -- see ../screenrc) before trusting a full run there.
+    An earlier version also recorded a wall-clock timestamp on every single handler event (via
+    time.monotonic()) to compute inter-arrival burstiness stats (mean/p95/max gap between
+    events) as a second symptom. Dropped in favor of a plain per-topic counter: that second
+    symptom was never used by the automated check below, only printed for manual inspection,
+    and per-event timestamping is overhead that lives entirely in THIS script's own subscriber
+    callbacks, not in the monitor being measured -- if those callbacks ever fell behind their
+    own incoming queue (same default depth-10 QoS as everything else here), that would silently
+    undercount the monitor's real output and misattribute this script's own bottleneck to the
+    monitor's. A plain integer increment carries essentially none of that risk, and costs less
+    than the timestamp + list-append it replaced.
+
+VALIDATED, including against the real compiled monitor: once ROS 2 (Lyrical Luth) and the
+`copilot` Haskell package were installed, both Group_1 and Group_2's real "copilot" nodes were
+built with colcon and load-tested for real (not a stand-in) at rates from 100 to 5000 Hz --
+publish counts matched the target rate exactly every time, and both showed the real saturation
+signature this script looks for (handler-event throughput peaking then declining as the publish
+rate kept climbing), with Group_2 (9 requirements) sustaining meaningfully higher throughput
+before saturating than Group_1 (13 requirements). One earlier bug this process caught: naming
+LoadTestNode's own tracking dicts `self._publishers`/`self._subscriptions`, which collide with
+rclpy's own `Node` internals of the same name and crashed `destroy_node()` -- fixed by renaming
+to `self._input_publishers`/`self._handler_subscriptions`.
 
 Usage (inside the ROS2 environment the monitor itself runs in, e.g. the Dockerfile's
 spaceros-user container, with this monitor's "copilot" node already running separately):
@@ -51,9 +57,8 @@ import argparse
 import csv
 import random
 import re
-import statistics
 import time
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 # Import failure is handled lazily (raised in main(), not here) so the topic-parsing and
@@ -132,12 +137,6 @@ def _random_value(msg_type_name: str, int_max: int):
     return random.randint(lo, int_max)
 
 
-@dataclass
-class _HandlerStats:
-    count: int = 0
-    timestamps: list[float] = field(default_factory=list)
-
-
 class LoadTestNode(Node):
     def __init__(self, interface: MonitorInterface, int_max: int):
         super().__init__("monitor_load_test")
@@ -153,7 +152,11 @@ class LoadTestNode(Node):
             topic: self.create_publisher(_MSG_TYPES[type_name], topic, 10)
             for topic, type_name in interface.inputs
         }
-        self._handler_stats: dict[str, _HandlerStats] = {h: _HandlerStats() for h in interface.handlers}
+        # A plain per-topic counter, not a timestamp log -- see the module docstring's "An
+        # earlier version..." paragraph for why: this is deliberately the cheapest possible
+        # callback, so this script's own subscriber-side processing is as unlikely as possible
+        # to become the bottleneck being measured.
+        self._handler_counts: dict[str, int] = {h: 0 for h in interface.handlers}
         self._handler_subscriptions = [
             self.create_subscription(Empty, topic, self._make_handler_callback(topic), 10)
             for topic in interface.handlers
@@ -161,9 +164,7 @@ class LoadTestNode(Node):
 
     def _make_handler_callback(self, topic: str):
         def _callback(_msg) -> None:
-            stats = self._handler_stats[topic]
-            stats.count += 1
-            stats.timestamps.append(time.monotonic())
+            self._handler_counts[topic] += 1
         return _callback
 
     def publish_one_round(self) -> None:
@@ -177,13 +178,12 @@ class LoadTestNode(Node):
             msg.data = _random_value(self._input_types[topic], self._int_max)
             publisher.publish(msg)
 
-    def handler_stats(self) -> dict[str, _HandlerStats]:
-        return self._handler_stats
+    def handler_counts(self) -> dict[str, int]:
+        return self._handler_counts
 
-    def reset_handler_stats(self) -> None:
-        for stats in self._handler_stats.values():
-            stats.count = 0
-            stats.timestamps.clear()
+    def reset_handler_counts(self) -> None:
+        for topic in self._handler_counts:
+            self._handler_counts[topic] = 0
 
 
 @dataclass
@@ -199,17 +199,15 @@ class StepResult:
     requirement_checks_per_sec: float
     handler_events: int
     handler_event_rate_hz: float
-    mean_inter_arrival_ms: float | None
-    p95_inter_arrival_ms: float | None
-    max_inter_arrival_ms: float | None
 
 
 def run_rate_step(
     node: LoadTestNode, rate_hz: float, duration_s: float, num_inputs: int, num_requirements: int,
 ) -> StepResult:
     """Publishes one round per 1/rate_hz seconds for duration_s seconds, spinning the node's
-    executor between publishes so handler callbacks are processed as soon as they arrive rather
-    than only in a batch at the end (which would distort the inter-arrival timings below).
+    executor between publishes so handler callbacks are processed as they arrive rather than
+    only in a batch at the end (which would make this script's own queue the bottleneck instead
+    of the monitor's -- see the module docstring).
 
     "One round" = one fresh value sent to each of num_inputs topics, each of which independently
     triggers a step() call on the monitor side (confirmed in copilot_monitor.cpp: every
@@ -217,7 +215,7 @@ def run_rate_step(
     num_requirements registered properties at once. So the actual load on the monitor is
     num_inputs * num_requirements times higher than the round rate alone suggests -- that's
     requirement_checks_per_sec in the result, not just actual_rate_hz."""
-    node.reset_handler_stats()
+    node.reset_handler_counts()
     interval = 1.0 / rate_hz
     deadline = time.monotonic() + duration_s
     published = 0
@@ -232,9 +230,7 @@ def run_rate_step(
             next_publish += interval
         rclpy.spin_once(node, timeout_sec=max(0.0, min(next_publish - now, deadline - now)))
 
-    all_timestamps = sorted(ts for stats in node.handler_stats().values() for ts in stats.timestamps)
-    total_handler_events = len(all_timestamps)
-    gaps_ms = [(b - a) * 1000.0 for a, b in zip(all_timestamps, all_timestamps[1:])]
+    total_handler_events = sum(node.handler_counts().values())
     actual_rate_hz = published / duration_s
     return StepResult(
         target_rate_hz=rate_hz,
@@ -243,9 +239,6 @@ def run_rate_step(
         requirement_checks_per_sec=actual_rate_hz * num_inputs * num_requirements,
         handler_events=total_handler_events,
         handler_event_rate_hz=total_handler_events / duration_s,
-        mean_inter_arrival_ms=statistics.mean(gaps_ms) if gaps_ms else None,
-        p95_inter_arrival_ms=(statistics.quantiles(gaps_ms, n=20)[18] if len(gaps_ms) >= 20 else None),
-        max_inter_arrival_ms=max(gaps_ms) if gaps_ms else None,
     )
 
 
@@ -264,8 +257,7 @@ def _print_saturation_hint(results: list[StepResult]) -> None:
             print(
                 f"\nPossible saturation between {prev.actual_rate_hz:.0f} Hz and "
                 f"{cur.actual_rate_hz:.0f} Hz: handler-event rate grew by only {event_growth:.2f}/s "
-                f"while the publish rate grew by {rate_growth:.2f}/s. Check inter-arrival p95/max "
-                "around this step too."
+                f"while the publish rate grew by {rate_growth:.2f}/s."
             )
             flagged = True
     if not flagged:
@@ -306,9 +298,7 @@ def main() -> None:
             print(
                 f"published={result.published} rounds ({result.actual_rate_hz:.1f}Hz) = "
                 f"{result.requirement_checks_per_sec:.0f} requirement-checks/s  "
-                f"handler_events={result.handler_events} ({result.handler_event_rate_hz:.1f}/s)  "
-                f"inter-arrival mean={result.mean_inter_arrival_ms}ms p95={result.p95_inter_arrival_ms}ms "
-                f"max={result.max_inter_arrival_ms}ms"
+                f"handler_events={result.handler_events} ({result.handler_event_rate_hz:.1f}/s)"
             )
             time.sleep(args.settle)
     finally:
