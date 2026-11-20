@@ -32,7 +32,7 @@ from ltlsplitter.core.fret_import import import_fret_file
 from ltlsplitter.core.kind2_check import check_realizability_kind2
 from ltlsplitter.core.realizability import check_realizability_typed
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "splitter_hidden_conjunction_ladder.json"
+_FIXTURE = Path(__file__).parent / "fixtures" / "ladders" / "splitter_hidden_conjunction_ladder.json"
 
 
 def _balanced(formula: str) -> bool:

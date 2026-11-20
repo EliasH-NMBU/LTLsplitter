@@ -33,7 +33,7 @@ from pathlib import Path
 from ltlsplitter.core.fret_import import import_fret_file
 from ltlsplitter.core.models import VariableType
 
-_FIXTURES = Path(__file__).parent / "fixtures"
+_FIXTURES = Path(__file__).parent / "fixtures" / "other"
 
 
 def test_finite_state_machine_imports_cleanly():

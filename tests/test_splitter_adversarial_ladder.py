@@ -53,7 +53,7 @@ from ltlsplitter.core.fret_import import import_fret_file
 from ltlsplitter.core.models import Variable, VariableRole, VariableType
 from ltlsplitter.core.realizability import _find_binary
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "splitter_adversarial_ladder.json"
+_FIXTURE = Path(__file__).parent / "fixtures" / "ladders" / "splitter_adversarial_ladder.json"
 
 
 def _balanced(formula: str) -> bool:
