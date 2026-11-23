@@ -31,16 +31,23 @@ WHY THIS APPROACH (read before changing the methodology):
     monitor's. A plain integer increment carries essentially none of that risk, and costs less
     than the timestamp + list-append it replaced.
 
-VALIDATED, including against the real compiled monitor: once ROS 2 (Lyrical Luth) and the
-`copilot` Haskell package were installed, both Group_1 and Group_2's real "copilot" nodes were
-built with colcon and load-tested for real (not a stand-in) at rates from 100 to 5000 Hz --
-publish counts matched the target rate exactly every time, and both showed the real saturation
-signature this script looks for (handler-event throughput peaking then declining as the publish
-rate kept climbing), with Group_2 (9 requirements) sustaining meaningfully higher throughput
-before saturating than Group_1 (13 requirements). One earlier bug this process caught: naming
+Run against the real compiled Group_1/2/3 monitors (ROS 2 Lyrical Luth, colcon-built). Publish
+counts match the target rate up to ~3000 Hz. The handler-event saturation signature does show up,
+but see MONITOR CPU below: for most groups it's this script's, not the monitor's. One earlier bug this process caught: naming
 LoadTestNode's own tracking dicts `self._publishers`/`self._subscriptions`, which collide with
 rclpy's own `Node` internals of the same name and crashed `destroy_node()` -- fixed by renaming
 to `self._input_publishers`/`self._handler_subscriptions`.
+
+MONITOR CPU (added after Group_3, 2026-11-23): the handler-event count turned out NOT to be a
+reliable throughput measure on its own. Sampling per-thread CPU showed this script's own Python
+executor thread pinned at ~100% already at 100 Hz for the 13- and 22-requirement groups -- it
+can't count more handler events than it can drain, so above that point handler_event_rate_hz
+measures this script's ceiling, not the monitor's. Each step therefore also records, from
+/proc, the monitor process's CPU (total and busiest thread -- its executor thread, which
+saturates first) and the CPU time it spends per step() call, plus this script's own busiest
+thread and a tester_saturated flag: when that's true, ignore that step's handler-event columns
+and read the monitor CPU columns instead. The monitor is found by process name ("copilot") or
+--monitor-pid.
 
 Usage (inside the ROS2 environment the monitor itself runs in, e.g. the Dockerfile's
 spaceros-user container, with this monitor's "copilot" node already running separately):
@@ -55,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import random
 import re
 import time
@@ -199,10 +207,60 @@ class StepResult:
     requirement_checks_per_sec: float
     handler_events: int
     handler_event_rate_hz: float
+    monitor_cpu_pct: float | None = None
+    """The monitor process's CPU over the step, in % of one core (all threads)."""
+    monitor_busiest_thread_pct: float | None = None
+    """Its busiest thread -- the executor thread running every callback and step(); ~100% means
+    the monitor is saturated."""
+    monitor_cpu_us_per_step: float | None = None
+    """Monitor CPU time per step() call (published rounds x input topics), in microseconds --
+    the per-message cost, comparable across groups with different requirement counts."""
+    tester_busiest_thread_pct: float | None = None
+    tester_saturated: bool | None = None
+    """True when this script's own executor thread was >= 90% busy: its handler-event count for
+    this step is then a lower bound, not a measurement."""
+
+
+_TESTER_SATURATED_PCT = 90.0
+
+
+def _thread_cpu_ticks(pid: int) -> dict[str, int]:
+    """utime + stime per thread of `pid`, from /proc (Linux only)."""
+    ticks = {}
+    task_dir = Path(f"/proc/{pid}/task")
+    for tid in os.listdir(task_dir):
+        try:
+            fields_ = (task_dir / tid / "stat").read_text().rsplit(")", 1)[1].split()
+        except OSError:
+            continue
+        ticks[tid] = int(fields_[11]) + int(fields_[12])
+    return ticks
+
+
+def _cpu_pcts(before: dict[str, int], after: dict[str, int], seconds: float) -> tuple[float, float]:
+    """(total %, busiest thread %) of one core over `seconds`."""
+    hz = os.sysconf("SC_CLK_TCK")
+    per_thread = [(after[t] - before.get(t, 0)) / hz / seconds * 100 for t in after]
+    return sum(per_thread), max(per_thread, default=0.0)
+
+
+def find_monitor_pid(name: str = "copilot") -> int | None:
+    """The running monitor's pid, by process name (the generated node's executable is called
+    "copilot"); None if not exactly one is running."""
+    matches = []
+    for entry in os.listdir("/proc"):
+        if entry.isdigit():
+            try:
+                if Path(f"/proc/{entry}/comm").read_text().strip() == name:
+                    matches.append(int(entry))
+            except OSError:
+                pass
+    return matches[0] if len(matches) == 1 else None
 
 
 def run_rate_step(
     node: LoadTestNode, rate_hz: float, duration_s: float, num_inputs: int, num_requirements: int,
+    monitor_pid: int | None = None,
 ) -> StepResult:
     """Publishes one round per 1/rate_hz seconds for duration_s seconds, spinning the node's
     executor between publishes so handler callbacks are processed as they arrive rather than
@@ -216,6 +274,9 @@ def run_rate_step(
     num_inputs * num_requirements times higher than the round rate alone suggests -- that's
     requirement_checks_per_sec in the result, not just actual_rate_hz."""
     node.reset_handler_counts()
+    monitor_before = _thread_cpu_ticks(monitor_pid) if monitor_pid else None
+    tester_before = _thread_cpu_ticks(os.getpid())
+    started = time.monotonic()
     interval = 1.0 / rate_hz
     deadline = time.monotonic() + duration_s
     published = 0
@@ -231,6 +292,13 @@ def run_rate_step(
         rclpy.spin_once(node, timeout_sec=max(0.0, min(next_publish - now, deadline - now)))
 
     total_handler_events = sum(node.handler_counts().values())
+    elapsed = time.monotonic() - started
+    _tester_total, tester_busiest = _cpu_pcts(tester_before, _thread_cpu_ticks(os.getpid()), elapsed)
+    monitor_total = monitor_busiest = monitor_us_per_step = None
+    if monitor_before is not None:
+        monitor_total, monitor_busiest = _cpu_pcts(monitor_before, _thread_cpu_ticks(monitor_pid), elapsed)
+        steps = published * num_inputs
+        monitor_us_per_step = monitor_total / 100 * elapsed / steps * 1e6 if steps else None
     actual_rate_hz = published / duration_s
     return StepResult(
         target_rate_hz=rate_hz,
@@ -239,6 +307,11 @@ def run_rate_step(
         requirement_checks_per_sec=actual_rate_hz * num_inputs * num_requirements,
         handler_events=total_handler_events,
         handler_event_rate_hz=total_handler_events / duration_s,
+        monitor_cpu_pct=None if monitor_total is None else round(monitor_total, 1),
+        monitor_busiest_thread_pct=None if monitor_busiest is None else round(monitor_busiest, 1),
+        monitor_cpu_us_per_step=None if monitor_us_per_step is None else round(monitor_us_per_step, 2),
+        tester_busiest_thread_pct=round(tester_busiest, 1),
+        tester_saturated=tester_busiest >= _TESTER_SATURATED_PCT,
     )
 
 
@@ -278,7 +351,11 @@ def main() -> None:
     parser.add_argument("--int-max", type=int, default=5, help="Int topics are randomized over roughly [-int_max, int_max] (or [0, int_max] for unsigned) -- see _random_value's docstring for why this defaults small")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=None, help="CSV file to write per-step results to")
+    parser.add_argument("--monitor-pid", type=int, default=None, help="The running monitor's pid, for its CPU columns (default: the one process named \"copilot\")")
     args = parser.parse_args()
+    monitor_pid = args.monitor_pid or find_monitor_pid()
+    if monitor_pid is None:
+        print("Monitor process not found (need exactly one process named \"copilot\", or --monitor-pid) -- monitor CPU columns will be empty.")
 
     random.seed(args.seed)
     interface = parse_monitor_interface(args.package_dir)
@@ -293,13 +370,20 @@ def main() -> None:
     try:
         for rate in (float(r) for r in args.rates.split(",")):
             print(f"\n--- target rate: {rate:g} Hz ---")
-            result = run_rate_step(node, rate, args.duration, len(interface.inputs), len(interface.handlers))
+            result = run_rate_step(node, rate, args.duration, len(interface.inputs), len(interface.handlers), monitor_pid)
             results.append(result)
             print(
                 f"published={result.published} rounds ({result.actual_rate_hz:.1f}Hz) = "
                 f"{result.requirement_checks_per_sec:.0f} requirement-checks/s  "
                 f"handler_events={result.handler_events} ({result.handler_event_rate_hz:.1f}/s)"
             )
+            if result.monitor_cpu_pct is not None:
+                print(
+                    f"monitor CPU {result.monitor_cpu_pct:.0f}% (busiest thread "
+                    f"{result.monitor_busiest_thread_pct:.0f}%), {result.monitor_cpu_us_per_step:.2f} us/step"
+                )
+            if result.tester_saturated:
+                print(f"tester saturated ({result.tester_busiest_thread_pct:.0f}%) -- handler events are a lower bound")
             time.sleep(args.settle)
     finally:
         node.destroy_node()

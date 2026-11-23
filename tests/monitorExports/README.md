@@ -39,20 +39,29 @@ input topic's callback independently calls it), and each `step()` re-evaluates e
 requirement at once, so the real check rate is `round_rate * num_input_topics * num_requirements`,
 not the round rate alone.
 
-**Validated against both real compiled monitors, not just reasoned through.** ROS 2 Lyrical Luth
-and the Haskell `copilot` package were installed in the LTLsplitter dev sandbox, both groups'
-real `copilot` nodes were built with `colcon build --packages-select copilot` (the sibling
-`test_requirements` package fails to build on this ROS2 release over an unrelated deprecated
-CMake macro, `ament_target_dependencies` -- build `copilot` alone), and `load_test.py` was run
-against each at rates from 100 to 5000 Hz. Both showed the real saturation signature this script
-looks for -- handler-event throughput peaking then declining as the publish rate kept climbing
--- with Group_2 (9 requirements) sustaining meaningfully higher throughput before saturating
-than Group_1 (13 requirements). One real bug this process caught, now fixed: `LoadTestNode`
-originally named its own tracking dicts `self._publishers`/`self._subscriptions`, which silently
-collide with rclpy's own `Node` internals of the same name and crashed `destroy_node()`.
-`parse_monitor_interface` (the part that doesn't need ROS2 at all) is additionally covered by
-`tests/test_load_test.py` in the main test suite, run directly against the real `Group_1`/
-`Group_2` files here.
+**Correction (2026-11-23): handler-event throughput alone measured this script, not the
+monitors.** Sampling per-thread CPU from `/proc` showed this script's own Python executor thread
+at ~100% already at 100 Hz for the 13- and 22-requirement groups, while the monitor itself was
+far from busy -- so the earlier "both groups peak around 500 Hz" reading of the handler-event
+rate was this script's counting ceiling. Each step now also records the monitor's CPU (total and
+busiest thread, i.e. its executor thread, which is what saturates), its CPU time per `step()`
+call, and a `tester_saturated` flag; when that flag is true, read the monitor columns, not the
+handler-event ones. The monitor is found by process name (`copilot`) or `--monitor-pid`.
+
+Results for Group_1 (13 requirements), Group_2 (9) and Group_3 (all 22 in one monitor), 3
+repetitions each, rates 50-3000 Hz, are in `results_2026-11-23/`. Estimated capacity (rate at
+which the monitor's executor thread reaches 100%, extrapolated from steps below 85%):
+Group_1 ~580 Hz, Group_2 ~1420 Hz, Group_3 ~420 Hz; CPU per step() below saturation ~370 us,
+~160 us and ~500 us. Above saturation the per-step figure falls only because messages are being
+dropped (the denominator counts published, not processed, messages) -- don't read it there.
+
+Built with ROS 2 Lyrical Luth and the Haskell `copilot` package: `colcon build
+--packages-select copilot` (the sibling `test_requirements` package fails to build on this ROS2
+release over the deprecated `ament_target_dependencies` macro -- build `copilot` alone). One bug
+an earlier run caught: `LoadTestNode` originally named its tracking dicts `self._publishers`/
+`self._subscriptions`, which collide with rclpy's own `Node` internals and crashed
+`destroy_node()`. `parse_monitor_interface` (no ROS2 needed) is covered by
+`tests/test_load_test.py`.
 
 One gotcha worth knowing if you regenerate the C code yourself: `runhaskell Copilot.hs` writes
 `copilot.c`/`copilot.h`/`copilot_types.h` to the **current directory**, not next to the `.hs`
