@@ -36,7 +36,7 @@ from ltlsplitter.core.models import FretImport, FretRequirement, SubFormula, Var
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.reference_check import find_undeclared_references
 from ltlsplitter.core.smv_import import InvalidSmvFileError, import_smv_file
-from ltlsplitter.gui.dialogs import RequirementDialog, VariableDialog
+from ltlsplitter.gui.dialogs import RequirementDialog, VariableDialog, VariableTableDialog
 from ltlsplitter.gui.pages.base import WizardPage
 from ltlsplitter.gui.theme import compact, set_status, theme_manager
 from ltlsplitter.gui.worker import run_in_background
@@ -90,7 +90,7 @@ class ImportSplitPage(WizardPage):
         "file (the original is never modified) with the sub-formulas appended as requirements "
         "nested under the original, shown here as a dropdown. New Requirement writes one from "
         "natural language (the LLM drafts the ptLTL/ftLTL), Edit Requirement changes any "
-        "requirement's text or formulas, and Add Variable declares a new variable -- each is "
+        "requirement's text or formulas, and Variable Table lists every variable, with Add Variable and Edit Variable to declare new ones or change their type, role, range and topic -- each is "
         "saved to the same copy, as is Save for deletions and assumption changes. The Assumption checkbox marks a "
         "requirement as an environment constraint rather than a system guarantee (seeded from "
         "FRET's \"*_assumption\" naming convention, correct it if wrong) -- used by the "
@@ -145,9 +145,11 @@ class ImportSplitPage(WizardPage):
         self.edit_requirement_button = QPushButton("Edit Requirement...")
         self.edit_requirement_button.setToolTip("Change the selected requirement's text or formulas.")
         self.edit_requirement_button.clicked.connect(self._on_edit_requirement_clicked)
-        self.add_variable_button = QPushButton("Add Variable...")
-        self.add_variable_button.setToolTip("Declare a new variable (type, role, range, topic, ...).")
-        self.add_variable_button.clicked.connect(self._on_add_variable_clicked)
+        self.variable_table_button = QPushButton("Variable Table...")
+        self.variable_table_button.setToolTip(
+            "Show every variable, add new ones and edit existing ones (type, role, range, topic, ...)."
+        )
+        self.variable_table_button.clicked.connect(self._on_variable_table_clicked)
         self.save_button = QPushButton("Save")
         self.save_button.setToolTip(
             "Write the whole session (edits, new requirements and variables, deletions, "
@@ -155,7 +157,7 @@ class ImportSplitPage(WizardPage):
         )
         self.save_button.clicked.connect(lambda: self._save_session())
         self.save_status_label = QLabel()
-        for widget in (self.new_requirement_button, self.edit_requirement_button, self.add_variable_button, self.save_button):
+        for widget in (self.new_requirement_button, self.edit_requirement_button, self.variable_table_button, self.save_button):
             edit_row.addWidget(widget)
         edit_row.addWidget(self.save_status_label, 1)
         self.content_layout.addLayout(edit_row)
@@ -946,6 +948,7 @@ class ImportSplitPage(WizardPage):
         dialog = VariableDialog(
             existing_names={v.name for v in fret_import.variables} if fret_import else set(),
             suggested_name=suggested_name,
+            formulas=self._all_formulas(),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -962,8 +965,48 @@ class ImportSplitPage(WizardPage):
             self._refresh_formula_display()
         return var
 
-    def _on_add_variable_clicked(self) -> None:
-        self._add_variable()
+    def _all_formulas(self) -> list[str]:
+        if not self.state.fret_import:
+            return []
+        return [f for r in self.state.fret_import.requirements for f in (r.pt_formula, r.ft_formula) if f]
+
+    def _edit_variable(self, name: str) -> bool:
+        """Shows the variable pop-up filled in with `name`'s current values; on Save, replaces
+        it in place (keeping its position) and saves the session. Returns whether it changed."""
+        fret_import = self.state.fret_import
+        index = next((i for i, v in enumerate(fret_import.variables) if v.name == name), None) if fret_import else None
+        if index is None:
+            return False
+        dialog = VariableDialog(
+            existing_names={v.name for v in fret_import.variables},
+            variable=fret_import.variables[index],
+            formulas=self._all_formulas(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        updated = dialog.variable()
+        if not fret_import.variables[index].topic and updated.topic == f"/{name}":
+            updated.topic = ""  # the default, still unset -- not an edit
+        if updated == fret_import.variables[index]:
+            return False
+        fret_import.variables[index] = updated
+        # Anything validated with the old type/range is stale now.
+        self.state.validation = None
+        self.state.realizability_results = {}
+        if self._save_session() is None:
+            self._refresh_formula_display()
+        return True
+
+    def _on_variable_table_clicked(self) -> None:
+        dialog = VariableTableDialog(
+            get_variables=lambda: list(self.state.fret_import.variables) if self.state.fret_import else [],
+            get_requirements=lambda: list(self.state.fret_import.requirements) if self.state.fret_import else [],
+            on_add=self._add_variable,
+            on_edit=self._edit_variable,
+            parent=self,
+        )
+        dialog.exec()
 
     def _on_accept_clicked(self) -> None:
         suggestion = self.state.split_suggestion

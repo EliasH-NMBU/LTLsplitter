@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QDialog, QInputDialog, QMessageBox
 from ltlsplitter.core.fret_import import import_fret_file
 from ltlsplitter.core.models import Formalization, FretRequirement, VariableRole, VariableType
 from ltlsplitter.core.project_state import ProjectState
-from ltlsplitter.gui.dialogs import RequirementDialog, VariableDialog
+from ltlsplitter.gui.dialogs import RequirementDialog, VariableDialog, VariableTableDialog
 from ltlsplitter.gui.pages.import_split import ImportSplitPage
 
 
@@ -143,7 +143,7 @@ def test_add_variable_popup_is_saved_with_its_parameters(qtbot, monkeypatch, tmp
         dialog.topic_edit.setText("/odom/speed")
 
     monkeypatch.setattr(VariableDialog, "exec", _fake_exec(fill))
-    page._on_add_variable_clicked()
+    page._add_variable()
 
     saved = {v["variable_name"]: v for v in _export(tmp_path)["variables"]}
     assert saved["speed"]["dataType"] == "double"
@@ -228,3 +228,98 @@ def test_resplitting_replaces_the_previous_sub_formulas(qtbot, monkeypatch, tmp_
 
     reqids = [r["reqid"] for r in _export(tmp_path)["requirements"]]
     assert reqids == ["r1", "r1.1"]
+
+
+# -- variable table --------------------------------------------------------------------------
+
+
+def _table_row(dialog: VariableTableDialog, name: str) -> list[str]:
+    for row in range(dialog.table.rowCount()):
+        if dialog.table.item(row, 0).text() == name:
+            return [dialog.table.item(row, c).text() for c in range(dialog.table.columnCount())]
+    raise AssertionError(f"{name} not in table")
+
+
+def _open_table(page, qtbot) -> VariableTableDialog:
+    dialog = VariableTableDialog(
+        get_variables=lambda: list(page.state.fret_import.variables),
+        get_requirements=lambda: list(page.state.fret_import.requirements),
+        on_add=page._add_variable, on_edit=page._edit_variable, parent=page,
+    )
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def test_variable_table_lists_every_variable(qtbot, monkeypatch, tmp_path):
+    page = _page(qtbot, monkeypatch, tmp_path)
+    dialog = _open_table(page, qtbot)
+
+    assert dialog.table.rowCount() == 2
+    assert _table_row(dialog, "a") == ["a", "Boolean", "Input", "", "", "/a", "1"]
+    assert _table_row(dialog, "b")[2] == "Output"
+
+
+def test_variable_table_add_goes_through_the_existing_popup_and_refreshes(qtbot, monkeypatch, tmp_path):
+    page = _page(qtbot, monkeypatch, tmp_path)
+    dialog = _open_table(page, qtbot)
+    monkeypatch.setattr(VariableDialog, "exec", _fake_exec(lambda d: d.name_edit.setText("halt")))
+
+    dialog.add_button.click()
+
+    assert dialog.table.rowCount() == 3
+    assert dialog.selected_name() == "halt"
+    assert "halt" in {v["variable_name"] for v in _export(tmp_path)["variables"]}
+
+
+def test_variable_table_edit_changes_type_and_range_and_saves(qtbot, monkeypatch, tmp_path):
+    page = _page(qtbot, monkeypatch, tmp_path)
+    dialog = _open_table(page, qtbot)
+    dialog.select("b")
+
+    def fill(d):
+        assert d.name_edit.isReadOnly() and d.name_edit.text() == "b"
+        assert d.type_combo.currentData() == VariableType.BOOL  # pre-filled
+        d.type_combo.setCurrentIndex(d.type_combo.findData(VariableType.INT))
+        d.min_edit.setText("0")
+        d.max_edit.setText("4")
+
+    monkeypatch.setattr(VariableDialog, "exec", _fake_exec(fill))
+    dialog.edit_button.click()
+
+    assert _table_row(dialog, "b")[1:4] == ["Integer", "Output", "0 .. 4"]
+    saved = next(v for v in _export(tmp_path)["variables"] if v["variable_name"] == "b")
+    assert (saved["dataType"], saved["min_value"], saved["max_value"]) == ("integer", 0.0, 4.0)
+    # its position in the list is kept
+    assert [v.name for v in page.state.fret_import.variables] == ["a", "b"]
+
+
+def test_clearing_a_field_in_an_edit_removes_it_from_the_save(qtbot, monkeypatch, tmp_path):
+    page = _page(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setattr(VariableDialog, "exec", _fake_exec(lambda d: (
+        d.type_combo.setCurrentIndex(d.type_combo.findData(VariableType.INT)), d.max_edit.setText("9"))))
+    page._edit_variable("a")
+    monkeypatch.setattr(VariableDialog, "exec", _fake_exec(lambda d: d.max_edit.clear()))
+    page._edit_variable("a")
+
+    saved = next(v for v in _export(tmp_path)["variables"] if v["variable_name"] == "a")
+    assert "max_value" not in saved
+
+
+def test_unchanged_edit_does_not_save(qtbot, monkeypatch, tmp_path):
+    page = _page(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setattr(VariableDialog, "exec", _fake_exec(lambda d: None))
+
+    assert page._edit_variable("a") is False
+    assert not (tmp_path / "ltlsplitter_exports").exists()
+
+
+def test_variable_popup_warns_when_type_contradicts_the_formulas(qtbot):
+    from ltlsplitter.core.models import Variable
+
+    dialog = VariableDialog(existing_names={"d"}, variable=Variable(name="d", type=VariableType.BOOL),
+                            formulas=["(H ((! d) -> x))"])
+    qtbot.addWidget(dialog)
+    assert dialog.usage_label.text() == ""
+
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData(VariableType.INT))
+    assert "only as a truth value" in dialog.usage_label.text()

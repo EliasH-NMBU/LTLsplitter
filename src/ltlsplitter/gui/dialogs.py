@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import re
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -16,10 +18,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
 )
 
 from ltlsplitter.core.complexity import formula_complexity
+from ltlsplitter.core.fret_import import infer_variable_type
 from ltlsplitter.core.llm_decompose import MissingAPIKeyError, formalize
 from ltlsplitter.core.models import FretRequirement, Variable, VariableRole, VariableType
 from ltlsplitter.core.reference_check import _LTL_KEYWORDS, find_undeclared_references
@@ -249,15 +254,27 @@ def _parse_optional_number(text: str) -> float | None:
 
 
 class VariableDialog(QDialog):
-    """Declares a new variable with the parameters the rest of the pipeline needs: type and role
-    (realizability, Ogma), a range or enum values (the SMV/Kind2 encodings), the defining
-    expressions for an internal variable (equivalence checks and Copilot), and the ROS topic the
-    monitor subscribes to."""
+    """Declares a new variable -- or, given `variable`, edits an existing one -- with the
+    parameters the rest of the pipeline needs: type and role (realizability, Ogma), a range or
+    enum values (the SMV/Kind2 encodings), the defining expressions for an internal variable
+    (equivalence checks and Copilot), and the ROS topic the monitor subscribes to.
 
-    def __init__(self, existing_names: set[str], suggested_name: str = "", parent=None):
+    `formulas` (every requirement's pt/ft text) lets it warn when the chosen type contradicts
+    how the requirements use the variable -- the mismatch that makes nuXmv reject "! x"."""
+
+    def __init__(
+        self,
+        existing_names: set[str],
+        suggested_name: str = "",
+        variable: Variable | None = None,
+        formulas: list[str] = (),
+        parent=None,
+    ):
         super().__init__(parent)
-        self._existing_names = existing_names
-        self.setWindowTitle("Add variable")
+        self._is_edit = variable is not None
+        self._existing_names = existing_names - ({variable.name} if variable else set())
+        self._formulas = list(formulas)
+        self.setWindowTitle(f"Edit variable {variable.name}" if self._is_edit else "Add variable")
         self.resize(520, 0)
 
         layout = QVBoxLayout(self)
@@ -298,8 +315,26 @@ class VariableDialog(QDialog):
         self.form.addRow("ROS topic:", self.topic_edit)
         layout.addLayout(self.form)
 
+        self.usage_label = QLabel()
+        self.usage_label.setWordWrap(True)
+        layout.addWidget(self.usage_label)
+
+        if variable is not None:
+            # Renaming would leave every formula that mentions it pointing at nothing.
+            self.name_edit.setText(variable.name)
+            self.name_edit.setReadOnly(True)
+            self.name_edit.setToolTip("A variable can't be renamed here -- the formulas refer to it by name.")
+            self.type_combo.setCurrentIndex(self.type_combo.findData(variable.type))
+            self.role_combo.setCurrentIndex(self.role_combo.findData(variable.role))
+            self.min_edit.setText("" if variable.min_value is None else f"{variable.min_value:g}")
+            self.max_edit.setText("" if variable.max_value is None else f"{variable.max_value:g}")
+            self.enum_edit.setText(", ".join(variable.enum_values))
+            self.assignment_edit.setText(variable.assignment or "")
+            self.copilot_assignment_edit.setText(variable.copilot_assignment or "")
+            self.topic_edit.setText("" if variable.topic == f"/{variable.name}" else variable.topic)
+
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add")
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save" if self._is_edit else "Add")
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
@@ -324,6 +359,33 @@ class VariableDialog(QDialog):
         ):
             self.form.setRowVisible(widget, visible)
         self.topic_edit.setPlaceholderText(f"/{self.name_edit.text().strip() or 'name'} (default)")
+        self._refresh_usage_warning()
+
+    def _refresh_usage_warning(self) -> None:
+        name = self.name_edit.text().strip()
+        if not name or not _IDENTIFIER_RE.fullmatch(name):
+            self.usage_label.clear()
+            return
+        used_in = [f for f in self._formulas if re.search(rf"\b{re.escape(name)}\b", f)]
+        if not used_in:
+            self.usage_label.clear()
+            return
+        usage = infer_variable_type(name, used_in)
+        chosen = self.type_combo.currentData()
+        if usage == VariableType.BOOL and chosen != VariableType.BOOL:
+            set_status(self.usage_label, "danger")
+            self.usage_label.setText(
+                f"The requirements use {name} only as a truth value (e.g. \"! {name}\"), never in a "
+                "comparison -- as a number the model checkers will reject those formulas."
+            )
+        elif usage != VariableType.BOOL and chosen == VariableType.BOOL:
+            set_status(self.usage_label, "danger")
+            self.usage_label.setText(
+                f"The requirements compare {name} with a number -- as a boolean the model "
+                "checkers will reject those comparisons."
+            )
+        else:
+            self.usage_label.clear()
 
     def validation_error(self) -> str | None:
         name = self.name_edit.text().strip()
@@ -362,7 +424,7 @@ class VariableDialog(QDialog):
     def accept(self) -> None:
         error = self.validation_error()
         if error:
-            QMessageBox.warning(self, "Can't add the variable yet", error)
+            QMessageBox.warning(self, "Can't save the variable yet" if self._is_edit else "Can't add the variable yet", error)
             return
         super().accept()
 
@@ -383,3 +445,119 @@ class VariableDialog(QDialog):
             assignment=self.assignment_edit.text().strip() or None if internal else None,
             copilot_assignment=self.copilot_assignment_edit.text().strip() or None if internal else None,
         )
+
+
+_TYPE_LABELS = dict(_TYPE_CHOICES)
+_ROLE_LABELS = {VariableRole.INPUT: "Input", VariableRole.OUTPUT: "Output", VariableRole.INTERNAL: "Internal"}
+_TABLE_COLUMNS = ("Name", "Type", "Role", "Range / values", "Assignment", "ROS topic", "Used by")
+
+
+def _range_text(var: Variable) -> str:
+    if var.type == VariableType.ENUM:
+        return "{" + ", ".join(var.enum_values) + "}" if var.enum_values else ""
+    if var.min_value is None and var.max_value is None:
+        return ""
+    lo = "" if var.min_value is None else f"{var.min_value:g}"
+    hi = "" if var.max_value is None else f"{var.max_value:g}"
+    return f"{lo} .. {hi}"
+
+
+class VariableTableDialog(QDialog):
+    """Every declared variable in one table, with Add Variable and Edit Variable (both through
+    VariableDialog). `get_variables`/`get_requirements` are read again after every change,
+    because a save reloads the project from disk (new objects); `on_add`/`on_edit` do the
+    change-and-save and return whether anything changed."""
+
+    def __init__(self, get_variables, get_requirements, on_add, on_edit, parent=None):
+        super().__init__(parent)
+        self._get_variables = get_variables
+        self._get_requirements = get_requirements
+        self._on_add = on_add
+        self._on_edit = on_edit
+        self.setWindowTitle("Variables")
+        self.resize(960, 520)
+
+        layout = QVBoxLayout(self)
+        self.summary_label = QLabel()
+        layout.addWidget(self.summary_label)
+
+        self.table = QTableWidget(0, len(_TABLE_COLUMNS))
+        self.table.setHorizontalHeaderLabels(_TABLE_COLUMNS)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.cellDoubleClicked.connect(lambda _row, _col: self._on_edit_clicked())
+        layout.addWidget(self.table)
+
+        row = QHBoxLayout()
+        self.add_button = compact(QPushButton("Add Variable..."))
+        self.add_button.clicked.connect(self._on_add_clicked)
+        self.edit_button = compact(QPushButton("Edit Variable..."))
+        self.edit_button.setToolTip("Edit the selected variable (or double-click its row).")
+        self.edit_button.clicked.connect(self._on_edit_clicked)
+        row.addWidget(self.add_button)
+        row.addWidget(self.edit_button)
+        row.addStretch()
+        close_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_buttons.rejected.connect(self.reject)
+        row.addWidget(close_buttons)
+        layout.addLayout(row)
+
+        self.refresh()
+
+    def refresh(self, select_name: str | None = None) -> None:
+        variables = self._get_variables()
+        requirements = self._get_requirements()
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(variables))
+        for row, var in enumerate(variables):
+            used_by = sum(1 for r in requirements if var.name in r.variable_names)
+            assignment = var.assignment or ""
+            cells = (
+                var.name, _TYPE_LABELS.get(var.type, var.type.value), _ROLE_LABELS.get(var.role, var.role.value),
+                _range_text(var), assignment,
+                "" if var.role == VariableRole.INTERNAL else (var.topic or f"/{var.name}"),
+                str(used_by),
+            )
+            for col, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if col == len(cells) - 1:
+                    item.setData(Qt.ItemDataRole.DisplayRole, used_by)  # sorts numerically
+                item.setData(Qt.ItemDataRole.UserRole, var.name)
+                self.table.setItem(row, col, item)
+        self.table.setSortingEnabled(True)
+        self.table.resizeColumnsToContents()
+        self.summary_label.setText(
+            f"{len(variables)} variable(s). Double-click a row to edit it."
+            if variables else "No variables declared yet."
+        )
+        self.edit_button.setEnabled(bool(variables))
+        if select_name:
+            self.select(select_name)
+
+    def select(self, name: str) -> None:
+        for row in range(self.table.rowCount()):
+            if self.table.item(row, 0).data(Qt.ItemDataRole.UserRole) == name:
+                self.table.selectRow(row)
+                return
+
+    def selected_name(self) -> str | None:
+        items = self.table.selectedItems()
+        return items[0].data(Qt.ItemDataRole.UserRole) if items else None
+
+    def _on_add_clicked(self) -> None:
+        var = self._on_add()
+        if var is not None:
+            self.refresh(select_name=var.name)
+
+    def _on_edit_clicked(self) -> None:
+        name = self.selected_name()
+        if name is None:
+            QMessageBox.information(self, "Nothing selected", "Select a variable in the table first.")
+            return
+        if self._on_edit(name):
+            self.refresh(select_name=name)

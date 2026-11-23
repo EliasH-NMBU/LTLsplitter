@@ -231,14 +231,18 @@ def _variable_dict(var: Variable, project: str, entry: dict | None = None) -> di
         entry["assignment"] = var.assignment or ""
     if (entry.get("copilotAssignment") or None) != var.copilot_assignment:
         entry["copilotAssignment"] = var.copilot_assignment or ""
-    if var.topic:
-        entry["topic"] = var.topic
-    if var.min_value is not None:
-        entry["min_value"] = var.min_value
-    if var.max_value is not None:
-        entry["max_value"] = var.max_value
-    if var.enum_values:
-        entry["enum_values"] = list(var.enum_values)
+    # Set when present, removed when cleared -- an edit that empties a field must not leave the
+    # old value behind in the file.
+    for key, value in (
+        ("topic", var.topic or None),
+        ("min_value", var.min_value),
+        ("max_value", var.max_value),
+        ("enum_values", list(var.enum_values) or None),
+    ):
+        if value is None:
+            entry.pop(key, None)
+        else:
+            entry[key] = value
     return entry
 
 
