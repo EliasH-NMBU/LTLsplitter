@@ -67,6 +67,15 @@ about 15,000 rounds/s (~105,000 messages/s, busiest thread ~93%); CPU per step()
 Group_1/Group_2 and ~31 us for Group_3 -- per-message ROS overhead dominates, evaluating 9 vs 22
 requirements costs only a few microseconds more.
 
+**Topic-filtered groups (`results_2026-11-23_topic_filtered/`).** Group_1 and Group_2 as exported
+here subscribe to all 7 sRobot topics, because page 4 used to pass every project variable to
+Ogma -- so splitting couldn't reduce any monitor's load. Generation now passes only the
+variables a group's requirements use (plus the inputs behind internal variables such as
+`dgt_7`): Group_1 then subscribes to 5 topics, Group_2 to 3. Regenerated that way ("g1s"/"g2s"
+in the results, built in /tmp, not committed here), the pair saturates at ~20,000 rounds/s
+(Group_1 is the bottleneck) versus ~15,000 for Group_3 and for the all-topic Group_1 + 2.
+Regenerate Group_1/Group_2 from page 4 to get the filtered packages.
+
 Built with ROS 2 Lyrical Luth and the Haskell `copilot` package: `colcon build
 --packages-select copilot` (the sibling `test_requirements` package fails to build on this ROS2
 release over the deprecated `ament_target_dependencies` macro -- build `copilot` alone). One bug

@@ -147,13 +147,12 @@ def test_parse_values_fills_unlisted_topics_with_zero_or_false():
     assert values == {"/state": 2, "/halt": True, "/speed": 0.0}
 
 
-def test_parse_values_rejects_unknown_topics_and_bad_booleans():
+def test_parse_values_skips_unknown_topics_and_rejects_bad_booleans():
     import pytest
 
     lt = _load_module()
     interface = lt.MonitorInterface(inputs=[("/halt", "Bool")], handlers=[])
-    with pytest.raises(ValueError, match="isn't an input"):
-        lt.parse_values("/nope=1", interface)
+    assert lt.parse_values("/nope=1", interface) == {"/halt": False}  # not subscribed: skipped
     with pytest.raises(ValueError, match="true/false"):
         lt.parse_values("/halt=2", interface)
 

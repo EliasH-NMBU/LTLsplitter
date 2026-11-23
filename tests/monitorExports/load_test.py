@@ -178,7 +178,10 @@ def parse_values(text: str, interface: MonitorInterface) -> dict[str, object]:
         topic, _, raw = pair.partition("=")
         topic = topic.strip() if topic.strip().startswith("/") else "/" + topic.strip()
         if topic not in types:
-            raise ValueError(f"{topic} isn't an input of this monitor -- inputs are {', '.join(types)}")
+            # One value list can then serve every group of a system: a monitor generated with
+            # only the topics its requirements use simply doesn't subscribe to the others.
+            print(f"Note: {topic} isn't an input of this monitor -- not published.")
+            continue
         raw, type_name = raw.strip(), types[topic]
         if type_name == "Bool":
             if raw.lower() not in ("true", "false", "1", "0"):
