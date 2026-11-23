@@ -1,0 +1,8 @@
+target_rate_hz,actual_rate_hz,published,requirement_checks_per_sec,handler_events,handler_event_rate_hz,monitor_cpu_pct,monitor_busiest_thread_pct,monitor_cpu_us_per_step,monitor_busiest_threads,tester_busiest_thread_pct,tester_saturated
+500.0,500.0,2000,45500.0,0,0.0,11.0,5.5,31.43,5.5,24.7,False
+1000.0,1000.0,4000,91000.0,0,0.0,21.5,11.5,30.71,11.5,43.7,False
+2000.0,2000.0,8000,182000.0,0,0.0,42.0,22.5,30.0,22.5,83.7,False
+4000.0,3586.5,14346,326371.5,0,0.0,72.2,39.0,28.78,39.0,97.5,True
+6000.0,3567.75,14271,324665.25,0,0.0,72.2,39.7,28.93,39.7,97.5,True
+8000.0,3608.75,14435,328396.25,0,0.0,72.0,39.2,28.5,39.2,97.5,True
+10000.0,3532.25,14129,321434.75,0,0.0,71.5,38.5,28.92,38.5,97.2,True

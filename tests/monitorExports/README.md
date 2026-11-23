@@ -55,6 +55,18 @@ Group_1 ~580 Hz, Group_2 ~1420 Hz, Group_3 ~420 Hz; CPU per step() below saturat
 ~160 us and ~500 us. Above saturation the per-step figure falls only because messages are being
 dropped (the denominator counts published, not processed, messages) -- don't read it there.
 
+**Nominal-value runs (`results_2026-11-23_nominal/`) -- the ones to use for load.** The random
+inputs above made roughly half of all checks fail, so the monitors' cost was dominated by
+publishing violations (and the violation stream overloaded this script). With `--values` every
+round publishes the same nominal values (`classifier=0, state=0, distance=10`, all outputs
+false), verified to give zero violations in every run, and `--package-dir` can be repeated to
+drive Group_1 + Group_2 together. One tester process tops out at ~2700-4000 rounds/s (Python
+publishing), so the saturation runs use 2-8 tester processes in parallel
+(`run_parallel_testers.sh`). Result: Group_1, Group_2, Group_1+2 and Group_3 all saturate at
+about 15,000 rounds/s (~105,000 messages/s, busiest thread ~93%); CPU per step() is ~28 us for
+Group_1/Group_2 and ~31 us for Group_3 -- per-message ROS overhead dominates, evaluating 9 vs 22
+requirements costs only a few microseconds more.
+
 Built with ROS 2 Lyrical Luth and the Haskell `copilot` package: `colcon build
 --packages-select copilot` (the sibling `test_requirements` package fails to build on this ROS2
 release over the deprecated `ament_target_dependencies` macro -- build `copilot` alone). One bug

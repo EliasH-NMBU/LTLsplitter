@@ -136,3 +136,33 @@ def test_main_fails_clearly_without_ros2(load_test, monkeypatch):
     monkeypatch.setattr("sys.argv", ["load_test.py", "--package-dir", str(_FIXTURES / "Group_1")])
     with pytest.raises(SystemExit, match="ROS2 environment"):
         load_test.main()
+
+
+def test_parse_values_fills_unlisted_topics_with_zero_or_false():
+    lt = _load_module()
+    interface = lt.MonitorInterface(inputs=[("/state", "Int32"), ("/halt", "Bool"), ("/speed", "Float64")], handlers=[])
+
+    values = lt.parse_values("state=2, /halt=true", interface)
+
+    assert values == {"/state": 2, "/halt": True, "/speed": 0.0}
+
+
+def test_parse_values_rejects_unknown_topics_and_bad_booleans():
+    import pytest
+
+    lt = _load_module()
+    interface = lt.MonitorInterface(inputs=[("/halt", "Bool")], handlers=[])
+    with pytest.raises(ValueError, match="isn't an input"):
+        lt.parse_values("/nope=1", interface)
+    with pytest.raises(ValueError, match="true/false"):
+        lt.parse_values("/halt=2", interface)
+
+
+def test_merge_interfaces_shares_inputs_and_keeps_every_handler():
+    lt = _load_module()
+    merged = lt.merge_interfaces([
+        lt.parse_monitor_interface(_FIXTURES / "Group_1"),
+        lt.parse_monitor_interface(_FIXTURES / "Group_2"),
+    ])
+    assert len(merged.inputs) == 7
+    assert len(merged.handlers) == 22
