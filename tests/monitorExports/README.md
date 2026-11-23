@@ -72,8 +72,10 @@ here subscribe to all 7 sRobot topics, because page 4 used to pass every project
 Ogma -- so splitting couldn't reduce any monitor's load. Generation now passes only the
 variables a group's requirements use (plus the inputs behind internal variables such as
 `dgt_7`): Group_1 then subscribes to 5 topics, Group_2 to 3. Regenerated that way ("g1s"/"g2s"
-in the results, built in /tmp, not committed here), the pair saturates at ~20,000 rounds/s
-(Group_1 is the bottleneck) versus ~15,000 for Group_3 and for the all-topic Group_1 + 2.
+in the results, built in /tmp, not committed here) and measured 3 times (`repeated/`), the
+rate at which the busiest monitor thread crosses 85% is: Group_3 14,160 +- 550 rounds/s,
+all-topic Group_1 + 2 13,070 +- 10, topic-filtered Group_1 + 2 17,360 +- 70 (1.23x Group_3;
+Group_1 is the bottleneck), Group_1 alone 18,450 +- 110, Group_2 alone 29,750 +- 430.
 Regenerate Group_1/Group_2 from page 4 to get the filtered packages.
 
 Built with ROS 2 Lyrical Luth and the Haskell `copilot` package: `colcon build

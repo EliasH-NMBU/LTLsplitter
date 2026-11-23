@@ -1,0 +1,2 @@
+target_rate_hz,actual_rate_hz,published,requirement_checks_per_sec,handler_events,handler_event_rate_hz,monitor_cpu_pct,monitor_busiest_thread_pct,monitor_cpu_us_per_step,monitor_busiest_threads,tester_busiest_thread_pct,tester_saturated
+2500.0,2107.3333333333335,12644,324529.3333333334,0,0.0,285.3,85.5,193.43,85.5 81.3,97.2,True
