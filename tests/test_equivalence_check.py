@@ -408,3 +408,14 @@ def test_numeric_declared_variable_used_as_boolean_gives_a_readable_nuxmv_error(
     check = _check_tautology_nuxmv("(! d) <-> (! d & TRUE)", [Variable(name="d", type=VariableType.INT)])
     assert check.status == "error"
     assert "declared as a number" in check.details
+
+
+@requires_spin
+def test_spin_handles_capitalised_variable_names():
+    """SPIN's LTL parser rejects propositions starting with an uppercase letter (UseCase6's
+    IMUFail, ParallelGuidanceMode, ...) -- they're aliased for SPIN only."""
+    variables = [Variable(name="IMUFail", type=VariableType.BOOL), Variable(name="stop", type=VariableType.BOOL)]
+    original = "((G (((! IMUFail) & (X IMUFail)) -> (X (F stop)))) & (IMUFail -> (F stop)))"
+
+    assert _check_tautology_spin(f"({original}) <-> ((IMUFail -> (F stop)))", variables).status == "not_tautology"
+    assert _check_tautology_spin("(! IMUFail) | IMUFail", variables).status == "tautology"

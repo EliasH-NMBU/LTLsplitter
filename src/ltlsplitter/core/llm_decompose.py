@@ -15,8 +15,9 @@ _SUGGEST_SCHEMA = {
     "properties": {
         "should_split": {
             "type": "boolean",
-            "description": "Whether this LTL formula conjoins multiple independently-"
-            "monitorable obligations and would benefit from being split into sub-properties.",
+            "description": "Whether a split exists whose parts are together equivalent to "
+            "the original, none alone equivalent to it, and whose largest part is less complex "
+            "than the original.",
         },
         "rationale": {"type": "string"},
         "refactoring_opportunity": {
@@ -36,13 +37,13 @@ _SUGGEST_SCHEMA = {
 
 _SUGGEST_SYSTEM_PROMPT = (
     "You review a single LTL requirement (given in both past-time and future-time form) and "
-    "judge whether it conjoins multiple independently-checkable obligations that would be "
-    "clearer and easier to runtime-monitor as separate sub-properties, versus being already "
-    "atomic. Be conservative: only recommend a split when the formula's top-level structure "
-    "genuinely separates (e.g. a conjunction of unrelated consequents), not just because it's "
-    "long or deeply nested -- but also recognize splits that follow from logical laws (disjunctive "
-    "triggers, biconditionals) even when no conjunction is written. Name the refactoring "
-    "opportunity you identified.\n\n" + REFACTORING_GUIDANCE
+    "decide whether it can be split into sub-formulas that meet the criterion below: together "
+    "equivalent to the original, none alone equivalent to it, and the largest part less complex "
+    "than the original. Recommend a split whenever such a split exists -- including splits that "
+    "follow from logical laws (disjunctive triggers, biconditionals, FRET's two trigger cases) "
+    "even when no conjunction is written at the top. Don't weigh whether the split is worth "
+    "it; only whether it exists. Recommend no split only when no such split exists, and then "
+    "say why. Name the refactoring opportunity you identified.\n\n" + REFACTORING_GUIDANCE
 )
 
 _DECOMPOSE_SCHEMA = {
@@ -136,10 +137,12 @@ def suggest_split(pt_formula: str, ft_formula: str, api_key: str | None = None) 
     prompt = f"Past-time form: {pt_formula}\nFuture-time form: {ft_formula}"
     response = client.messages.create(
         model=_MODEL,
-        max_tokens=1024,
+        max_tokens=4096,
         system=_SUGGEST_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": _SUGGEST_SCHEMA}},
+        # Not "low": deciding whether a sound, non-degenerate split exists means working the
+        # formula through, and at low effort it answered from the surface pattern instead.
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": _SUGGEST_SCHEMA}},
     )
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)

@@ -153,3 +153,21 @@ def test_formalize_sends_declared_variables_and_style_examples(monkeypatch):
 def test_formalize_schema_has_no_unsupported_min_items():
     from ltlsplitter.core.llm_decompose import _FORMALIZE_SCHEMA
     assert "minItems" not in json.dumps(_FORMALIZE_SCHEMA)
+
+
+def test_suggest_prompt_uses_the_evaluation_criterion_not_a_conservative_judgement(monkeypatch):
+    from ltlsplitter.core.llm_decompose import suggest_split
+
+    client = _patch_client(monkeypatch, {
+        "should_split": True, "rationale": "x", "refactoring_opportunity": "complex_conditional_structure",
+        "suggested_count": 2,
+    })
+    suggest_split("(H a)", "(G a)", api_key="sk-test")
+
+    call = client.messages.calls[0]
+    system = call["system"]
+    assert "conservative" not in system.lower()
+    assert "largest part" in system and "less complex" in system
+    assert "first-step case" in system  # FRET when/if patterns are named as a real split
+    assert "edge-detection" not in system  # no longer listed as lazy
+    assert call["output_config"]["effort"] != "low"

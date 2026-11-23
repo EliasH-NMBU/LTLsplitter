@@ -4,7 +4,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -359,6 +359,25 @@ def _promela_model(formula: str, variables: list[Variable], start_first: bool) -
     return f"{decls}\n\nactive proctype system() {{\n  do\n  :: {step}\n  od\n}}\n"
 
 
+def _spin_safe_names(formula: str, variables: list[Variable]) -> tuple[str, list[Variable]]:
+    """SPIN's LTL parser only takes propositions starting with a lowercase letter ("expected
+    predicate, saw 'I'" for IMUFail -- found on UseCase6), so capitalised variables are renamed
+    to a lowercase-prefixed alias, consistently in the formula and in the generated model."""
+    declared = {v.name for v in variables}
+    renames = {name: f"v_{name}" for name in declared if not name[:1].islower()}
+    taken = declared | set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", formula))
+    for name in list(renames):
+        while renames[name] in taken:
+            renames[name] = "v_" + renames[name]
+    if not renames:
+        return formula, variables
+    formula = re.sub(
+        r"\b[A-Za-z_][A-Za-z0-9_]*\b", lambda m: renames.get(m.group(0), m.group(0)), formula
+    )
+    variables = [replace(v, name=renames.get(v.name, v.name)) for v in variables]
+    return formula, variables
+
+
 def _check_tautology_spin(formula: str, variables: list[Variable]) -> _TautologyCheck:
     if _is_trivial_tautology(formula):
         return _TautologyCheck("tautology")
@@ -366,6 +385,7 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
     formula = _substitute_internal_variables(formula, variables)
     if _is_trivial_tautology(formula):
         return _TautologyCheck("tautology")
+    formula, variables = _spin_safe_names(formula, variables)
 
     typed_names = {v.name for v in variables if v.type != VariableType.BOOL}
     comparisons, leftover = extract_typed_comparisons(formula, typed_names)
