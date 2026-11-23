@@ -127,12 +127,14 @@ class _TautologyCheck:
 
 
 def _as_equivalence_result(tool: str, check: _TautologyCheck) -> ToolCheckResult:
-    return ToolCheckResult(tool=tool, passed=check.status == "tautology", details=check.details)
+    status = {"tautology": "pass", "not_tautology": "fail"}.get(check.status, "error")
+    return ToolCheckResult(tool=tool, passed=status == "pass", details=check.details, status=status)
 
 
 def _as_nondegeneracy_result(tool: str, check: _TautologyCheck) -> ToolCheckResult:
     """Non-degenerate means the sub-formula is NOT equivalent to the original."""
-    return ToolCheckResult(tool=tool, passed=check.status == "not_tautology", details=check.details)
+    status = {"not_tautology": "pass", "tautology": "fail"}.get(check.status, "error")
+    return ToolCheckResult(tool=tool, passed=status == "pass", details=check.details, status=status)
 
 
 # -- nuXmv: both pt and ft use H/G-style LTL nuXmv understands natively -----------------------

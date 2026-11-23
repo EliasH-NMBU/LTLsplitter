@@ -15,6 +15,8 @@ def _isolate_qsettings(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     QSettings.setPath(QSettings.Format.NativeFormat, QSettings.Scope.UserScope, str(tmp_path))
+    # Never create use case folders in the real data/ folder of this checkout.
+    monkeypatch.setattr("ltlsplitter.gui.pages.import_split.default_data_root", lambda: tmp_path / "data")
 
 
 def _tool_available(env_var: str, name: str) -> bool:

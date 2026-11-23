@@ -143,6 +143,9 @@ class ToolCheckResult:
     tool: str
     passed: bool
     details: str = ""
+    status: str = ""
+    """"pass", "fail" or "error" (tool missing/crashed/couldn't decide) -- `passed` alone can't
+    tell a real negative verdict from a tool that never got an answer. Empty when unknown."""
 
 
 @dataclass

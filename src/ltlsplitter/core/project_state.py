@@ -20,6 +20,9 @@ class ProjectState:
     fret_import_path: str = ""
     """Where fret_import was most recently loaded from -- the base a split's sub-formulas get
     appended to (as a new copy, never overwriting this file) when the user saves a split."""
+    use_case_dir: str = ""
+    """The use case's folder under the data root (core/evaluation_log.py), created on import:
+    where the first split's save file goes by default and where page 2 logs every validation."""
     session_export_path: str = ""
     """Set once the first split of this import is saved -- every later split in the same
     session (i.e. before a fresh "Import FRET file...") is appended into this same file

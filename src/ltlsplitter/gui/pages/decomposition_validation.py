@@ -5,12 +5,15 @@ import html
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout
 
+from pathlib import Path
+
 from ltlsplitter.core.equivalence_check import validate_decomposition
+from ltlsplitter.core.evaluation_log import append_evaluation, evaluation_row
 from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose
 from ltlsplitter.core.models import FretRequirement, ToolCheckResult
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.gui.pages.base import WizardPage
-from ltlsplitter.gui.theme import compact, theme_manager
+from ltlsplitter.gui.theme import compact, set_status, theme_manager
 
 _SETTINGS_ORG = "LTLsplitter"
 _SETTINGS_APP = "LTLsplitter"
@@ -32,6 +35,11 @@ class DecompositionValidationPage(WizardPage):
         validate_button = compact(QPushButton("Validate Decomposition"))
         validate_button.clicked.connect(self._on_validate_clicked)
         self.content_layout.addWidget(validate_button)
+
+        self.log_label = QLabel()
+        self.log_label.setWordWrap(True)
+        self.log_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.content_layout.addWidget(self.log_label)
 
         self.content_layout.addWidget(QLabel("What's being tested:"))
         self.what_is_tested_label = QLabel()
@@ -158,6 +166,35 @@ class DecompositionValidationPage(WizardPage):
             return
         self.state.validation = validation
         self._render(validation)
+        self._log_evaluation(req, sub_formulas, validation)
+
+    def _log_evaluation(self, req, sub_formulas, validation) -> None:
+        """Appends this validation to the use case's evaluation log. An unsplit requirement
+        (validated against itself) isn't a decomposition, so it's not logged."""
+        if len(sub_formulas) < 2:
+            set_status(self.log_label, "muted")
+            self.log_label.setText("Not logged: the requirement isn't split.")
+            return
+        if not self.state.use_case_dir:
+            set_status(self.log_label, "danger")
+            self.log_label.setText("Not logged: no use case folder (import a file on page 1).")
+            return
+        row = evaluation_row(
+            use_case=Path(self.state.use_case_dir).name,
+            requirement=req,
+            sub_formulas=sub_formulas,
+            validation=validation,
+            declared_names={v.name for v in self.state.fret_import.variables},
+            source_file=self.state.fret_import_path,
+        )
+        try:
+            path = append_evaluation(self.state.use_case_dir, row)
+        except OSError as exc:
+            set_status(self.log_label, "danger")
+            self.log_label.setText(f"Couldn't write the evaluation log: {exc}")
+            return
+        set_status(self.log_label, "success")
+        self.log_label.setText(f"Logged to {path}")
 
     def _on_retry_clicked(self) -> None:
         req = self._selected_requirement()

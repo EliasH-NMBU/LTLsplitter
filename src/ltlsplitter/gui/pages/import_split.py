@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from ltlsplitter.core.complexity import formula_complexity
+from ltlsplitter.core.data_location import DATA_ROOT_SETTING, default_data_root
+from ltlsplitter.core.evaluation_log import ensure_use_case_folder
 from ltlsplitter.core.fret_import import (
     InvalidFretFileError,
     import_fret_file,
@@ -135,6 +137,21 @@ class ImportSplitPage(WizardPage):
         import_row.addWidget(import_button)
         import_row.addWidget(self.import_label, 1)
         self.content_layout.addLayout(import_row)
+
+        data_row = QHBoxLayout()
+        data_row.addWidget(QLabel("Data folder:"))
+        self.data_root_label = QLabel()
+        self.data_root_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        data_row.addWidget(self.data_root_label, 1)
+        data_root_button = compact(QPushButton("Change..."))
+        data_root_button.setToolTip(
+            "Where each use case gets its own folder (created on import) holding its saved split "
+            "file and the evaluation log page 2 appends to."
+        )
+        data_root_button.clicked.connect(self._on_change_data_root_clicked)
+        data_row.addWidget(data_root_button)
+        self.content_layout.addLayout(data_row)
+        self._refresh_data_root_label()
 
         edit_row = QHBoxLayout()
         self.new_requirement_button = QPushButton("New Requirement...")
@@ -336,6 +353,7 @@ class ImportSplitPage(WizardPage):
         self.state.fret_import = fret_import
         self.state.fret_import_path = path
         self.state.session_export_path = ""
+        self._open_use_case_folder()
         self.state.selected_requirement_id = None
         self.state.recommended_split_reqids = set()
         self.state.search_results = {}
@@ -347,6 +365,37 @@ class ImportSplitPage(WizardPage):
         self.search_status_label.clear()
         self.import_label.setText(f"{fret_import.project}: {len(fret_import.requirements)} requirement(s)")
         self._refresh_requirement_tree()
+
+    # -- evaluation data folder -----------------------------------------------------------
+
+    def data_root(self) -> Path:
+        return Path(self._settings.value(DATA_ROOT_SETTING, "") or default_data_root())
+
+    def _refresh_data_root_label(self) -> None:
+        text = str(self.data_root())
+        if self.state.use_case_dir:
+            text += f"   (use case: {Path(self.state.use_case_dir).name})"
+        self.data_root_label.setText(text)
+
+    def _on_change_data_root_clicked(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Data folder for evaluation logs", str(self.data_root()))
+        if not path:
+            return
+        self._settings.setValue(DATA_ROOT_SETTING, path)
+        if self.state.fret_import is not None:
+            self._open_use_case_folder()
+        self._refresh_data_root_label()
+
+    def _open_use_case_folder(self) -> None:
+        """Creates (if needed) this use case's folder under the data root."""
+        try:
+            folder = ensure_use_case_folder(self.data_root(), self.state.fret_import.project, self.state.fret_import_path or None)
+        except OSError as exc:
+            self.state.use_case_dir = ""
+            QMessageBox.warning(self, "Data folder unavailable", f"Couldn't create the use case folder: {exc}")
+        else:
+            self.state.use_case_dir = str(folder)
+        self._refresh_data_root_label()
 
     def _refresh_requirement_tree(self) -> None:
         self.requirement_tree.blockSignals(True)
@@ -805,15 +854,15 @@ class ImportSplitPage(WizardPage):
     # -- saving the session -------------------------------------------------------------
 
     def _resolve_export_path(self, default_name: str) -> Path | None:
-        """The session's save file. Only the first save of an import asks for a name (put next
-        to the imported file, in ltlsplitter_exports/); later saves reuse it, so one sitting
-        accumulates into one file. With nothing imported (a project started from scratch here)
-        the user picks the location."""
+        """The session's save file. Only the first save of an import asks for a name -- saved
+        in the use case's data folder, next to its evaluation log; later saves reuse it, so
+        one sitting accumulates into one file. With nothing imported (a project started from
+        scratch here) the user picks the location, starting in the data folder."""
         if self.state.session_export_path:
             return Path(self.state.session_export_path)
         if not self.state.fret_import_path:
             path, _ = QFileDialog.getSaveFileName(
-                self, "Save requirements", f"{default_name}.json", "FRET export (*.json)",
+                self, "Save requirements", str(self.data_root() / f"{default_name}.json"), "FRET export (*.json)",
             )
             if not path:
                 return None
@@ -826,6 +875,9 @@ class ImportSplitPage(WizardPage):
         name = name.strip()
         if not name.endswith(".json"):
             name += ".json"
+        if self.state.use_case_dir:
+            return Path(self.state.use_case_dir) / name
+        # The data folder couldn't be created -- fall back to next to the imported file.
         return Path(self.state.fret_import_path).parent / _EXPORTS_DIR_NAME / name
 
     def _save_session(self, default_name: str | None = None) -> Path | None:
@@ -850,6 +902,8 @@ class ImportSplitPage(WizardPage):
         self.state.fret_import = new_import
         self.state.fret_import_path = str(export_path)
         self.state.session_export_path = str(export_path)
+        if not self.state.use_case_dir:  # a project started from scratch here
+            self._open_use_case_folder()
         set_status(self.save_status_label, "success")
         self.save_status_label.setText(f"Saved to {export_path}")
         self.import_label.setText(f"{new_import.project}: {len(new_import.requirements)} requirement(s)")
