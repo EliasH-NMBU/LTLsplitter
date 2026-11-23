@@ -123,6 +123,15 @@ class SplitSuggestion:
 
 
 @dataclass
+class Formalization:
+    """An LLM translation of a natural-language requirement into LTL (llm_decompose.formalize)."""
+
+    pt_formula: str
+    ft_formula: str
+    notes: str = ""
+
+
+@dataclass
 class SubFormula:
     id: str
     pt_formula: str

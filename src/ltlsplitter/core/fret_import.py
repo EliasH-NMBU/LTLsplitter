@@ -104,6 +104,12 @@ def import_fret_file(path: str | Path) -> FretImport:
                 role=_ID_TYPE_MAP.get(_normalize_type_field(var.get("idType")), VariableRole.INPUT),
                 assignment=var.get("assignment") or None,
                 copilot_assignment=var.get("copilotAssignment") or None,
+                # Not FRET fields -- only present when this project wrote the file itself
+                # (save_session below), so a variable added in the GUI round-trips fully.
+                topic=var.get("topic", ""),
+                min_value=var.get("min_value"),
+                max_value=var.get("max_value"),
+                enum_values=list(var.get("enum_values", [])),
             )
         )
 
@@ -124,56 +130,120 @@ def _referenced_variable_names(sub: SubFormula, declared_names: set[str]) -> lis
     return sorted({t for t in tokens if t in declared_names})
 
 
-def _sub_formula_to_requirement_dict(sub: SubFormula, parent: FretRequirement, project: str, declared_names: set[str]) -> dict:
-    """Builds a FRET-requirement-shaped dict for a split's sub-formula, ready to append to a
-    project export's "requirements" array -- round-trips cleanly back through import_fret_file
-    since it fills every field that function reads (pt/ptExpanded and ft/ftExpanded/
-    ftInfAUExpanded all get the same already-resolved value, which is fine: the distinction
-    between those fields only mattered for FRET's own raw export, not for formulas this project
-    generated itself)."""
+_REVERSE_DATA_TYPE_MAP = {
+    VariableType.BOOL: "boolean",
+    VariableType.INT: "integer",
+    VariableType.FLOAT: "double",
+    VariableType.ENUM: "enum",
+}
+_REVERSE_ID_TYPE_MAP = {role: name for name, role in _ID_TYPE_MAP.items()}
+
+
+def referenced_variable_names(pt_formula: str, ft_formula: str, declared_names: set[str]) -> list[str]:
+    """Declared variables a requirement's formulas mention -- what FRET stores as
+    semantics.variables, recomputed whenever a formula is written or edited here."""
+    return _referenced_variable_names(SubFormula(id="", pt_formula=pt_formula, ft_formula=ft_formula), declared_names)
+
+
+def _new_requirement_dict(req: FretRequirement, project: str) -> dict:
     return {
-        "reqid": sub.id,
-        "parent_reqid": parent.reqid,
+        "reqid": req.reqid,
+        "parent_reqid": req.parent_reqid,
         "project": project,
-        "fulltext": f"(LLM split of {parent.reqid}) {parent.fulltext}".strip(),
-        "is_assumption": parent.is_assumption,
+        "fulltext": req.fulltext,
+        "is_assumption": req.is_assumption,
         "semantics": {
-            "pt": sub.pt_formula,
-            "ptExpanded": sub.pt_formula,
-            "ft": sub.ft_formula,
-            "ftExpanded": sub.ft_formula,
-            "ftInfAUExpanded": sub.ft_formula,
-            "variables": _referenced_variable_names(sub, declared_names),
+            "pt": req.pt_formula,
+            "ptExpanded": req.pt_formula,
+            "ft": req.ft_formula,
+            "ftExpanded": req.ft_formula,
+            "ftInfAUExpanded": req.ft_formula,
+            "variables": list(req.variable_names),
         },
     }
 
 
-def append_sub_formulas_and_save(
-    source_path: str | Path, sub_formulas: list[SubFormula], parent: FretRequirement, project: str,
-    declared_names: set[str], output_path: str | Path, current_requirements: list[FretRequirement] = (),
-) -> None:
-    """Reads the FRET project export at `source_path`, appends `sub_formulas` (a split's
-    results) to its "requirements" array as entries parented to `parent`, and writes the result
-    to `output_path` -- a new file. `source_path` is never modified, so the original FRET
-    export this project was given always stays intact.
+def _patch_requirement_dict(entry: dict, req: FretRequirement) -> dict:
+    """Writes the in-memory requirement's values onto a copy of its original FRET entry. Only
+    the formula fields this project reads get overwritten, and only when they actually changed,
+    so an untouched requirement keeps FRET's own export byte-for-byte. An edited one is marked
+    `ltlsplitter_edited`: FRET's other derived fields (CoCoSpecCode, the *BtwExpanded variants,
+    ...) still describe the old formula and can't be regenerated outside FRET."""
+    entry = json.loads(json.dumps(entry))
+    entry["fulltext"] = req.fulltext
+    entry["is_assumption"] = req.is_assumption
+    if req.parent_reqid:
+        entry["parent_reqid"] = req.parent_reqid
+    semantics = entry.setdefault("semantics", {})
+    edited = False
+    if req.pt_formula != _pt_formula(semantics):
+        semantics["pt"] = semantics["ptExpanded"] = req.pt_formula
+        edited = True
+    if req.ft_formula != _ft_formula(semantics):
+        semantics["ft"] = semantics["ftExpanded"] = semantics["ftInfAUExpanded"] = req.ft_formula
+        edited = True
+    if edited:
+        semantics["variables"] = list(req.variable_names)
+        entry["ltlsplitter_edited"] = True
+    return entry
 
-    `current_requirements` is the caller's current in-memory list (post any GUI edits, such as
-    toggling `is_assumption`) -- its values are patched onto the matching existing entries before
-    writing, so a toggle made before a split isn't silently lost when the split is saved; entries
-    not present in `current_requirements` are written through unchanged."""
-    source_path = Path(source_path)
+
+def _variable_dict(var: Variable, project: str, entry: dict | None = None) -> dict:
+    entry = json.loads(json.dumps(entry)) if entry else {"project": project, "variable_name": var.name}
+    # Only rewritten when the parsed value differs, so FRET's own spellings ("double",
+    # ["boolean"], ...) of an untouched variable are kept as they were.
+    if _DATA_TYPE_MAP.get(_normalize_type_field(entry.get("dataType"))) != var.type:
+        entry["dataType"] = _REVERSE_DATA_TYPE_MAP[var.type]
+    if _ID_TYPE_MAP.get(_normalize_type_field(entry.get("idType"))) != var.role:
+        entry["idType"] = _REVERSE_ID_TYPE_MAP[var.role]
+    if (entry.get("assignment") or None) != var.assignment:
+        entry["assignment"] = var.assignment or ""
+    if (entry.get("copilotAssignment") or None) != var.copilot_assignment:
+        entry["copilotAssignment"] = var.copilot_assignment or ""
+    if var.topic:
+        entry["topic"] = var.topic
+    if var.min_value is not None:
+        entry["min_value"] = var.min_value
+    if var.max_value is not None:
+        entry["max_value"] = var.max_value
+    if var.enum_values:
+        entry["enum_values"] = list(var.enum_values)
+    return entry
+
+
+def _read_source(source_path: str | Path | None) -> dict:
+    """The file the session was loaded from, used as the base so FRET's own fields (rationale,
+    status, CoCoSpec code, ...) survive the save. A .smv import has no JSON to start from, so
+    the save is built from the in-memory model alone."""
+    if not source_path or Path(source_path).suffix.lower() != ".json":
+        return {"requirements": [], "variables": []}
     try:
-        data = json.loads(source_path.read_text())
+        data = json.loads(Path(source_path).read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise InvalidFretFileError(f"Couldn't read '{source_path}' as JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise InvalidFretFileError(f"'{source_path}' doesn't look like a FRET project export.")
+    return data
 
-    is_assumption_by_reqid = {r.reqid: r.is_assumption for r in current_requirements}
-    for req in data.get("requirements", []):
-        if req.get("reqid") in is_assumption_by_reqid:
-            req["is_assumption"] = is_assumption_by_reqid[req["reqid"]]
 
-    new_entries = [_sub_formula_to_requirement_dict(sub, parent, project, declared_names) for sub in sub_formulas]
-    data["requirements"] = list(data.get("requirements", [])) + new_entries
+def save_session(fret_import: FretImport, output_path: str | Path, source_path: str | Path | None = None) -> None:
+    """Writes the whole in-memory session to `output_path` in FRET export format: every
+    requirement (edited originals, splits, ones added from natural language), every variable
+    (including ones added in the GUI), assumption flags, and deletions. Requirements and
+    variables that came from `source_path` keep their original FRET fields; `source_path`
+    itself is only read, unless it *is* `output_path` (the session's own save file)."""
+    data = _read_source(source_path)
+    project = fret_import.project
+
+    source_reqs = {r.get("reqid"): r for r in data.get("requirements", [])}
+    data["requirements"] = [
+        _patch_requirement_dict(source_reqs[req.reqid], req) if req.reqid in source_reqs
+        else _new_requirement_dict(req, project)
+        for req in fret_import.requirements
+    ]
+
+    source_vars = {v.get("variable_name"): v for v in data.get("variables", [])}
+    data["variables"] = [_variable_dict(var, project, source_vars.get(var.name)) for var in fret_import.variables]
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

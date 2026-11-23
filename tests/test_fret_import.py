@@ -6,10 +6,10 @@ import pytest
 from ltlsplitter.core.fret_import import (
     InvalidFretFileError,
     _normalize_type_field,
-    append_sub_formulas_and_save,
     import_fret_file,
+    save_session,
 )
-from ltlsplitter.core.models import FretRequirement, SubFormula, VariableRole, VariableType
+from ltlsplitter.core.models import FretImport, FretRequirement, Variable, VariableRole, VariableType
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "sRobotFRETfile.json"
 
@@ -75,30 +75,109 @@ def test_import_fret_file_heuristically_flags_assumption_named_requirements():
     assert by_reqid["state_req101"].is_assumption is False
 
 
-def test_append_sub_formulas_and_save_round_trips_is_assumption(tmp_path):
-    """A user-toggled is_assumption (on an existing, already-imported requirement) must survive
-    a split-save -- otherwise the checkbox toggle introduced for the assume/guarantee fix would
-    silently appear to work in the GUI, then evaporate the moment a split is saved."""
+def _write_source(tmp_path) -> Path:
     source = tmp_path / "source.json"
     source.write_text(json.dumps({
         "requirements": [
-            {"reqid": "r1", "parent_reqid": "", "project": "demo", "fulltext": "...",
-             "semantics": {"pt": "(H a)", "ft": "(G a)", "variables": ["a"]}},
+            {"reqid": "r1", "parent_reqid": "", "project": "demo", "fulltext": "...", "rationale": "keep me",
+             "semantics": {"pt": "(H a)", "ptExpanded": "(H a)", "ft": "(G a)", "CoCoSpecCode": "old",
+                           "variables": ["a"]}},
+            {"reqid": "r2", "parent_reqid": "", "project": "demo", "fulltext": "second",
+             "semantics": {"pt": "(H b)", "ft": "(G b)", "variables": ["b"]}},
         ],
-        "variables": [{"variable_name": "a", "dataType": "boolean", "idType": "Input"}],
+        "variables": [
+            {"variable_name": "a", "dataType": ["boolean"], "idType": "Input", "reqs": ["r1"]},
+            {"variable_name": "b", "dataType": "boolean", "idType": "Output"},
+        ],
     }))
+    return source
+
+
+def test_save_session_round_trips_is_assumption(tmp_path):
+    """A user-toggled is_assumption must survive a save -- otherwise the checkbox would appear
+    to work in the GUI, then evaporate the moment the session is written."""
+    source = _write_source(tmp_path)
+    fret_import = import_fret_file(source)
+    fret_import.requirement("r1").is_assumption = True
     output = tmp_path / "copy.json"
 
-    # Simulate the user having flipped r1's checkbox to "assumption" before saving the split --
-    # `parent` and `current_requirements` share the same object, as they would in the real GUI
-    # flow (both read off `self.state.fret_import.requirements`).
-    parent = FretRequirement(reqid="r1", fulltext="...", pt_formula="(H a)", ft_formula="(G a)", is_assumption=True)
-    sub_formulas = [SubFormula(id="r1.1", pt_formula="(H a)", ft_formula="(G a)")]
-    current_requirements = [parent]
+    save_session(fret_import, output, source_path=source)
 
-    append_sub_formulas_and_save(source, sub_formulas, parent, "demo", {"a"}, output, current_requirements=current_requirements)
+    assert import_fret_file(output).requirement("r1").is_assumption is True
+
+
+def test_save_session_writes_an_edited_main_requirement(tmp_path):
+    source = _write_source(tmp_path)
+    fret_import = import_fret_file(source)
+    req = fret_import.requirement("r1")
+    req.fulltext = "edited text"
+    req.pt_formula, req.ft_formula, req.variable_names = "(H (a & b))", "(G (a & b))", ["a", "b"]
+    output = tmp_path / "copy.json"
+
+    save_session(fret_import, output, source_path=source)
+
+    reimported = import_fret_file(output).requirement("r1")
+    assert (reimported.fulltext, reimported.pt_formula, reimported.ft_formula) == (
+        "edited text", "(H (a & b))", "(G (a & b))")
+    assert reimported.variable_names == ["a", "b"]
+    entry = json.loads(output.read_text())["requirements"][0]
+    assert entry["rationale"] == "keep me"  # FRET's own fields survive
+    assert entry["ltlsplitter_edited"] is True  # flags CoCoSpecCode etc. as stale
+    # the source is only read
+    assert json.loads(source.read_text())["requirements"][0]["semantics"]["pt"] == "(H a)"
+
+
+def test_save_session_leaves_untouched_entries_as_fret_wrote_them(tmp_path):
+    source = _write_source(tmp_path)
+    output = tmp_path / "copy.json"
+
+    save_session(import_fret_file(source), output, source_path=source)
+
+    original, saved = json.loads(source.read_text()), json.loads(output.read_text())
+    assert saved["variables"] == original["variables"]
+    r2_saved = saved["requirements"][1]
+    assert r2_saved["semantics"] == original["requirements"][1]["semantics"]
+    assert "ltlsplitter_edited" not in r2_saved
+
+
+def test_save_session_adds_new_requirements_and_variables_and_drops_deleted_ones(tmp_path):
+    source = _write_source(tmp_path)
+    fret_import = import_fret_file(source)
+    fret_import.requirements = [r for r in fret_import.requirements if r.reqid != "r2"]
+    fret_import.requirements.append(FretRequirement(
+        reqid="new1", fulltext="speed stays low", pt_formula="(H (speed < 5))", ft_formula="(G (speed < 5))",
+        variable_names=["speed"],
+    ))
+    fret_import.variables.append(Variable(name="speed", type=VariableType.FLOAT, role=VariableRole.INPUT,
+                                          topic="/odom/speed", min_value=0.0, max_value=10.0))
+    fret_import.variables.append(Variable(name="mode", type=VariableType.ENUM, enum_values=["idle", "run"]))
+    fret_import.variables.append(Variable(name="near", type=VariableType.BOOL, role=VariableRole.INTERNAL,
+                                          assignment="speed < 1", copilot_assignment="speed < constant 1"))
+    output = tmp_path / "copy.json"
+
+    save_session(fret_import, output, source_path=source)
     reimported = import_fret_file(output)
 
-    assert reimported.requirement("r1").is_assumption is True
-    # The sub-formula inherits the parent's (now-toggled) is_assumption value.
-    assert reimported.requirement("r1.1").is_assumption is True
+    assert [r.reqid for r in reimported.requirements] == ["r1", "new1"]
+    assert reimported.requirement("new1").pt_formula == "(H (speed < 5))"
+    speed = next(v for v in reimported.variables if v.name == "speed")
+    assert (speed.type, speed.topic, speed.min_value, speed.max_value) == (VariableType.FLOAT, "/odom/speed", 0.0, 10.0)
+    mode = next(v for v in reimported.variables if v.name == "mode")
+    assert mode.enum_values == ["idle", "run"]
+    near = next(v for v in reimported.variables if v.name == "near")
+    assert (near.role, near.assignment, near.copilot_assignment) == (
+        VariableRole.INTERNAL, "speed < 1", "speed < constant 1")
+
+
+def test_save_session_works_without_a_json_source(tmp_path):
+    """An .smv import (or a project started from scratch) has no FRET JSON to start from."""
+    fret_import = FretImport(
+        project="demo",
+        requirements=[FretRequirement(reqid="r1", fulltext="", pt_formula="(H a)", ft_formula="", variable_names=["a"])],
+        variables=[Variable(name="a", type=VariableType.BOOL)],
+    )
+    output = tmp_path / "copy.json"
+
+    save_session(fret_import, output, source_path=tmp_path / "model.smv")
+
+    assert import_fret_file(output).requirement("r1").pt_formula == "(H a)"

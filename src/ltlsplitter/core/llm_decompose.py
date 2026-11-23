@@ -5,7 +5,7 @@ import os
 
 import anthropic
 
-from ltlsplitter.core.models import SplitSuggestion, SubFormula
+from ltlsplitter.core.models import Formalization, FretRequirement, SplitSuggestion, SubFormula, Variable
 from ltlsplitter.core.refactoring_catalogue import OPPORTUNITIES, REFACTORING_GUIDANCE
 
 _MODEL = "claude-opus-5"
@@ -83,6 +83,36 @@ _DECOMPOSE_SYSTEM_PROMPT = (
     "no single sub-formula may by itself already express the entire original formula's logic -- "
     "that would not be a genuine split. Don't invent obligations not present in the original.\n\n"
     + REFACTORING_GUIDANCE
+)
+
+
+_FORMALIZE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "pt_formula": {"type": "string", "description": "Past-time LTL (H/O/S/Y/Z)."},
+        "ft_formula": {"type": "string", "description": "Future-time LTL (G/F/X/U)."},
+        "notes": {
+            "type": "string",
+            "description": "Assumptions made where the text was ambiguous, and any variable "
+            "the text needs that isn't declared. Empty if none.",
+        },
+    },
+    "required": ["pt_formula", "ft_formula", "notes"],
+    "additionalProperties": False,
+}
+
+_FORMALIZE_SYSTEM_PROMPT = (
+    "You translate one natural-language requirement into LTL, written the way NASA FRET "
+    "writes its formulas. Give it in BOTH forms: a past-time form (H = historically, O = once, "
+    "S = since, Y = yesterday, Z = weak yesterday; bounded forms like O[0,5] are allowed) that "
+    "is checked at every step against the trace so far, and a future-time form (G, F, X, U) "
+    "over infinite traces. Both forms must express the same obligation. Operators: & | ! -> "
+    "<-> and the comparisons = != < <= > >=; constants TRUE/FALSE. Parenthesize every "
+    "sub-expression fully, e.g. (H ((mode = 2) -> (! alarm))). Use only the declared variables "
+    "(and the enum values listed for them); if the text needs something no variable covers, "
+    "use a short descriptive identifier and say so in notes. Where the text is ambiguous, "
+    "choose the most plausible reading and state it in notes. Don't add obligations the text "
+    "doesn't state."
 )
 
 
@@ -169,3 +199,42 @@ def decompose(
         SubFormula(id=f"{parent_id}.{i + 1}", pt_formula=item["pt_formula"], ft_formula=item["ft_formula"])
         for i, item in enumerate(data["sub_formulas"])
     ]
+
+
+def _describe_variable(var: Variable) -> str:
+    text = f"{var.name}: {var.type.value}, {var.role.value}"
+    if var.enum_values:
+        text += f", values {{{', '.join(var.enum_values)}}}"
+    if var.min_value is not None or var.max_value is not None:
+        text += f", range {var.min_value if var.min_value is not None else '?'}..{var.max_value if var.max_value is not None else '?'}"
+    if var.assignment:
+        text += f", defined as {var.assignment}"
+    return text
+
+
+def formalize(
+    natural_language: str,
+    variables: list[Variable],
+    examples: list[FretRequirement] = (),
+    api_key: str | None = None,
+) -> Formalization:
+    """Asks the LLM to turn a natural-language requirement into past- and future-time LTL over
+    the declared `variables`. `examples` (a few requirements from the same file) show it the
+    project's own formula style."""
+    client = _client(api_key)
+    prompt = "Declared variables:\n" + ("\n".join(f"- {_describe_variable(v)}" for v in variables) or "(none)")
+    if examples:
+        prompt += "\n\nExamples from the same project:\n" + "\n".join(
+            f"- \"{ex.fulltext}\"\n  pt: {ex.pt_formula}\n  ft: {ex.ft_formula}" for ex in examples
+        )
+    prompt += f"\n\nRequirement to translate:\n{natural_language}"
+    response = client.messages.create(
+        model=_MODEL,
+        max_tokens=4096,
+        system=_FORMALIZE_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": _FORMALIZE_SCHEMA}},
+    )
+    text = next(block.text for block in response.content if block.type == "text")
+    data = json.loads(text)
+    return Formalization(pt_formula=data["pt_formula"], ft_formula=data["ft_formula"], notes=data.get("notes", ""))

@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -24,12 +25,18 @@ from PySide6.QtWidgets import (
 )
 
 from ltlsplitter.core.complexity import formula_complexity
-from ltlsplitter.core.fret_import import InvalidFretFileError, append_sub_formulas_and_save, import_fret_file
+from ltlsplitter.core.fret_import import (
+    InvalidFretFileError,
+    import_fret_file,
+    referenced_variable_names,
+    save_session,
+)
 from ltlsplitter.core.llm_decompose import MissingAPIKeyError, decompose, suggest_split
-from ltlsplitter.core.models import FretRequirement, SubFormula
+from ltlsplitter.core.models import FretImport, FretRequirement, SubFormula, Variable
 from ltlsplitter.core.project_state import ProjectState
 from ltlsplitter.core.reference_check import find_undeclared_references
 from ltlsplitter.core.smv_import import InvalidSmvFileError, import_smv_file
+from ltlsplitter.gui.dialogs import RequirementDialog, VariableDialog
 from ltlsplitter.gui.pages.base import WizardPage
 from ltlsplitter.gui.theme import compact, set_status, theme_manager
 from ltlsplitter.gui.worker import run_in_background
@@ -44,6 +51,7 @@ _FORMULA_VIEW_SETTING = "split/formula_view"
 # future-time formula, and showing both side by side makes long formulas hard to read.
 _FORMULA_VIEWS = (("pt", "ptLTL"), ("ft", "ftLTL"), ("both", "Both"))
 _FORMULA_STYLE = "font-family: monospace;"
+_STYLE_EXAMPLE_COUNT = 3
 
 
 class _SearchHighlightDelegate(QStyledItemDelegate):
@@ -80,7 +88,10 @@ class ImportSplitPage(WizardPage):
         "the suggestion, then have the LLM perform the split -- the sub-formulas are editable "
         "before moving on to validation. Accepting a split saves it as a new copy of the FRET "
         "file (the original is never modified) with the sub-formulas appended as requirements "
-        "nested under the original, shown here as a dropdown. The Assumption checkbox marks a "
+        "nested under the original, shown here as a dropdown. New Requirement writes one from "
+        "natural language (the LLM drafts the ptLTL/ftLTL), Edit Requirement changes any "
+        "requirement's text or formulas, and Add Variable declares a new variable -- each is "
+        "saved to the same copy, as is Save for deletions and assumption changes. The Assumption checkbox marks a "
         "requirement as an environment constraint rather than a system guarantee (seeded from "
         "FRET's \"*_assumption\" naming convention, correct it if wrong) -- used by the "
         "realizability check on page 3."
@@ -124,6 +135,30 @@ class ImportSplitPage(WizardPage):
         import_row.addWidget(import_button)
         import_row.addWidget(self.import_label, 1)
         self.content_layout.addLayout(import_row)
+
+        edit_row = QHBoxLayout()
+        self.new_requirement_button = QPushButton("New Requirement...")
+        self.new_requirement_button.setToolTip(
+            "Write a requirement in natural language and let the LLM define it in ptLTL and ftLTL."
+        )
+        self.new_requirement_button.clicked.connect(self._on_new_requirement_clicked)
+        self.edit_requirement_button = QPushButton("Edit Requirement...")
+        self.edit_requirement_button.setToolTip("Change the selected requirement's text or formulas.")
+        self.edit_requirement_button.clicked.connect(self._on_edit_requirement_clicked)
+        self.add_variable_button = QPushButton("Add Variable...")
+        self.add_variable_button.setToolTip("Declare a new variable (type, role, range, topic, ...).")
+        self.add_variable_button.clicked.connect(self._on_add_variable_clicked)
+        self.save_button = QPushButton("Save")
+        self.save_button.setToolTip(
+            "Write the whole session (edits, new requirements and variables, deletions, "
+            "assumption flags) to the save file. The original import is never modified."
+        )
+        self.save_button.clicked.connect(lambda: self._save_session())
+        self.save_status_label = QLabel()
+        for widget in (self.new_requirement_button, self.edit_requirement_button, self.add_variable_button, self.save_button):
+            edit_row.addWidget(widget)
+        edit_row.addWidget(self.save_status_label, 1)
+        self.content_layout.addLayout(edit_row)
 
         body = QHBoxLayout()
 
@@ -301,6 +336,7 @@ class ImportSplitPage(WizardPage):
         self.state.split_accepted = False
         self.state.sub_formulas = []
         self.force_split_button.setVisible(False)
+        self.save_status_label.clear()
         self.import_label.setText(f"{fret_import.project}: {len(fret_import.requirements)} requirement(s)")
         self._refresh_requirement_tree()
 
@@ -652,56 +688,216 @@ class ImportSplitPage(WizardPage):
         self._save_split(req, sub_formulas)
 
     def _save_split(self, parent, sub_formulas: list[SubFormula]) -> None:
-        """Saves the split as a new copy of the FRET file (original untouched), with the
-        sub-formulas appended as requirements nested under `parent`, then makes that copy the
-        active file going forward so later stages (and future splits) see them as real
-        requirements -- not just in-memory for this one session.
+        """Adds the split's sub-formulas to the session as requirements nested under `parent`
+        and saves the session (see `_save_session`). A re-split replaces the parent's previous
+        sub-formulas instead of piling a second set of the same ids next to them."""
+        if self.state.fret_import is None or not self.state.fret_import_path:
+            return  # nothing imported to save next to (and a scratch project has been saved by now)
+        fret_import = self.state.fret_import
+        previous = list(fret_import.requirements)
+        superseded = self._descendants(parent.reqid)
+        declared = self._declared_names() or set()
+        fret_import.requirements = [r for r in previous if r.reqid not in superseded] + [
+            FretRequirement(
+                reqid=sub.id,
+                fulltext=f"(LLM split of {parent.reqid}) {parent.fulltext}".strip(),
+                pt_formula=sub.pt_formula,
+                ft_formula=sub.ft_formula,
+                variable_names=referenced_variable_names(sub.pt_formula, sub.ft_formula, declared),
+                parent_reqid=parent.reqid,
+                is_assumption=parent.is_assumption,
+            )
+            for sub in sub_formulas
+        ]
+        first_save = not self.state.session_export_path
+        export_path = self._save_session(default_name=f"{parent.reqid}_split")
+        if export_path is None:
+            fret_import.requirements = previous
+            return
+        self._select_requirement_item(parent.reqid)
+        if first_save:
+            QMessageBox.information(
+                self, "Split saved",
+                f"Saved a copy with {len(sub_formulas)} new requirement(s) to:\n{export_path}\n\n"
+                "The original file was not modified. This copy is now the active file -- "
+                "any further splits, edits and additions this session are saved into it too, "
+                "with no further prompt.",
+            )
 
-        Only the FIRST split of a given import prompts for a file name -- every later split in
-        the same session (tracked via `state.session_export_path`, reset on a fresh import)
-        reuses that same file instead, so splitting several requirements in one sitting
-        accumulates into one file rather than prompting -- and nesting a fresh
-        "ltlsplitter_exports" directory inside the previous one -- every single time."""
-        if not self.state.fret_import_path:
-            return  # nothing to copy from (shouldn't normally happen -- a split needs an import)
+    def _descendants(self, reqid: str) -> set[str]:
+        """Every requirement nested (at any depth) under `reqid`, not including itself."""
+        found: set[str] = set()
+        frontier = {reqid}
+        while frontier:
+            frontier = {
+                r.reqid for r in self.state.fret_import.requirements
+                if r.parent_reqid in frontier and r.reqid not in found
+            }
+            found |= frontier
+        return found
 
+    # -- saving the session -------------------------------------------------------------
+
+    def _resolve_export_path(self, default_name: str) -> Path | None:
+        """The session's save file. Only the first save of an import asks for a name (put next
+        to the imported file, in ltlsplitter_exports/); later saves reuse it, so one sitting
+        accumulates into one file. With nothing imported (a project started from scratch here)
+        the user picks the location."""
         if self.state.session_export_path:
-            export_path = Path(self.state.session_export_path)
-        else:
-            default_name = f"{parent.reqid}_split"
-            name, ok = QInputDialog.getText(
-                self, "Save split", "File name for the new copy (original file is never modified):", text=default_name,
+            return Path(self.state.session_export_path)
+        if not self.state.fret_import_path:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save requirements", f"{default_name}.json", "FRET export (*.json)",
             )
-            if not ok or not name.strip():
-                return
-            name = name.strip()
-            if not name.endswith(".json"):
-                name += ".json"
-            export_dir = Path(self.state.fret_import_path).parent / _EXPORTS_DIR_NAME
-            export_path = export_dir / name
+            if not path:
+                return None
+            return Path(path if path.endswith(".json") else path + ".json")
+        name, ok = QInputDialog.getText(
+            self, "Save", "File name for the new copy (original file is never modified):", text=default_name,
+        )
+        if not ok or not name.strip():
+            return None
+        name = name.strip()
+        if not name.endswith(".json"):
+            name += ".json"
+        return Path(self.state.fret_import_path).parent / _EXPORTS_DIR_NAME / name
 
-        declared_names = {v.name for v in self.state.fret_import.variables}
+    def _save_session(self, default_name: str | None = None) -> Path | None:
+        """Writes the whole in-memory session -- edited requirements, splits, requirements and
+        variables added here, deletions, assumption flags -- to the session's save file, then
+        makes that file the active one. Returns the path, or None if nothing was saved."""
+        if self.state.fret_import is None:
+            QMessageBox.information(self, "Nothing to save", "Import a file or add a requirement first.")
+            return None
+        if default_name is None:
+            default_name = f"{self.state.fret_import.project or 'requirements'}_edited"
+        export_path = self._resolve_export_path(default_name)
+        if export_path is None:
+            return None
         try:
-            append_sub_formulas_and_save(
-                self.state.fret_import_path, sub_formulas, parent, self.state.fret_import.project,
-                declared_names, export_path, current_requirements=self.state.fret_import.requirements,
-            )
+            save_session(self.state.fret_import, export_path, source_path=self.state.fret_import_path or None)
             new_import = import_fret_file(export_path)
         except Exception as exc:  # noqa: BLE001 -- surface any file-I/O or re-parse failure
-            QMessageBox.critical(self, "Save failed", f"Couldn't save the split: {exc}")
-            return
+            QMessageBox.critical(self, "Save failed", f"Couldn't save: {exc}")
+            return None
 
         self.state.fret_import = new_import
         self.state.fret_import_path = str(export_path)
         self.state.session_export_path = str(export_path)
+        set_status(self.save_status_label, "success")
+        self.save_status_label.setText(f"Saved to {export_path}")
+        self.import_label.setText(f"{new_import.project}: {len(new_import.requirements)} requirement(s)")
         self._refresh_requirement_tree()
-        self._select_requirement_item(parent.reqid)
-        QMessageBox.information(
-            self, "Split saved",
-            f"Saved a copy with {len(sub_formulas)} new requirement(s) to:\n{export_path}\n\n"
-            "The original FRET file was not modified. This copy is now the active file -- "
-            "any further splits this session are appended into it too, with no further prompt.",
+        return export_path
+
+    # -- writing / editing requirements and variables ------------------------------------
+
+    def _ensure_project(self) -> FretImport:
+        """Lets a project be started from scratch here, with nothing imported."""
+        if self.state.fret_import is None:
+            self.state.fret_import = FretImport(project="new_project")
+            self.import_label.setText("new_project: 0 requirement(s)")
+        return self.state.fret_import
+
+    def _style_examples(self) -> list[FretRequirement]:
+        """A few of the file's own requirements, so the LLM matches the project's notation."""
+        if not self.state.fret_import:
+            return []
+        candidates = [
+            r for r in self.state.fret_import.requirements
+            if not r.parent_reqid and r.fulltext and r.pt_formula and r.ft_formula
+        ]
+        return candidates[:_STYLE_EXAMPLE_COUNT]
+
+    def _unused_reqid(self) -> str:
+        existing = {r.reqid for r in self.state.fret_import.requirements} if self.state.fret_import else set()
+        n = len(existing) + 1
+        while f"req_{n}" in existing:
+            n += 1
+        return f"req_{n}"
+
+    def _requirement_dialog(self, requirement: FretRequirement | None) -> RequirementDialog:
+        fret_import = self.state.fret_import
+        child_count = len(self._descendants(requirement.reqid)) if requirement is not None else 0
+        return RequirementDialog(
+            variables=list(fret_import.variables) if fret_import else [],
+            existing_reqids={r.reqid for r in fret_import.requirements} if fret_import else set(),
+            api_key=self.api_key_edit.text().strip(),
+            requirement=requirement,
+            examples=self._style_examples(),
+            child_count=child_count,
+            default_reqid=self._unused_reqid(),
+            on_add_variable=self._add_variable,
+            parent=self,
         )
+
+    def _on_new_requirement_clicked(self) -> None:
+        dialog = self._requirement_dialog(None)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        fret_import = self._ensure_project()
+        req = FretRequirement(
+            reqid=dialog.reqid(),
+            fulltext=dialog.fulltext(),
+            pt_formula=dialog.pt_formula(),
+            ft_formula=dialog.ft_formula(),
+            variable_names=referenced_variable_names(dialog.pt_formula(), dialog.ft_formula(), self._declared_names() or set()),
+        )
+        fret_import.requirements.append(req)
+        self.state.selected_requirement_id = req.reqid
+        if self._save_session(default_name=f"{fret_import.project or 'requirements'}_edited") is None:
+            self._refresh_requirement_tree()  # kept in the session, just not on disk yet
+
+    def _on_edit_requirement_clicked(self) -> None:
+        req = self._selected_requirement()
+        if req is None:
+            QMessageBox.information(self, "Nothing selected", "Select a requirement in the tree first.")
+            return
+        dialog = self._requirement_dialog(req)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        req = self._selected_requirement()  # the dialog's Add Variable may have re-saved/reloaded
+        if req is None:
+            return
+        formulas_changed = (req.pt_formula, req.ft_formula) != (dialog.pt_formula(), dialog.ft_formula())
+        req.fulltext = dialog.fulltext()
+        req.pt_formula = dialog.pt_formula()
+        req.ft_formula = dialog.ft_formula()
+        req.variable_names = referenced_variable_names(req.pt_formula, req.ft_formula, self._declared_names() or set())
+        if formulas_changed:
+            # Any earlier suggestion/validation was about the old formula.
+            self.state.split_suggestion = None
+            self.state.validation = None
+            self.suggestion_label.clear()
+            self.force_split_button.setVisible(False)
+        if self._save_session() is None:
+            self._refresh_formula_display()
+
+    def _add_variable(self, suggested_name: str = "") -> Variable | None:
+        """Shows the Add Variable pop-up; on Add, declares the variable and saves the session.
+        Returns the new variable (also used by the requirement dialog's own Add Variable)."""
+        fret_import = self.state.fret_import
+        dialog = VariableDialog(
+            existing_names={v.name for v in fret_import.variables} if fret_import else set(),
+            suggested_name=suggested_name,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        var = dialog.variable()
+        fret_import = self._ensure_project()
+        fret_import.variables.append(var)
+        # Requirements that already used this name (flagged "possibly undeclared" until now)
+        # reference it from here on.
+        for req in fret_import.requirements:
+            if var.name not in req.variable_names and var.name in referenced_variable_names(req.pt_formula, req.ft_formula, {var.name}):
+                req.variable_names.append(var.name)
+        if self._save_session() is None:
+            self._refresh_formula_display()
+        return var
+
+    def _on_add_variable_clicked(self) -> None:
+        self._add_variable()
 
     def _on_accept_clicked(self) -> None:
         suggestion = self.state.split_suggestion

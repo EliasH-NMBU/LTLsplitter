@@ -125,3 +125,31 @@ def test_decompose_prompt_includes_the_refactoring_catalogue(monkeypatch):
 def test_suggest_schema_has_no_unsupported_min_items():
     from ltlsplitter.core.llm_decompose import _SUGGEST_SCHEMA
     assert "minItems" not in json.dumps(_SUGGEST_SCHEMA)
+
+
+def test_formalize_sends_declared_variables_and_style_examples(monkeypatch):
+    from ltlsplitter.core.llm_decompose import formalize
+    from ltlsplitter.core.models import FretRequirement, Variable, VariableType
+
+    client = _patch_client(monkeypatch, {
+        "pt_formula": "(H ((mode = run) -> alarm))", "ft_formula": "(G ((mode = run) -> alarm))", "notes": "",
+    })
+    variables = [
+        Variable(name="mode", type=VariableType.ENUM, enum_values=["idle", "run"]),
+        Variable(name="alarm", type=VariableType.BOOL),
+    ]
+    example = FretRequirement(reqid="r0", fulltext="Always idle.", pt_formula="(H (mode = idle))", ft_formula="(G (mode = idle))")
+
+    result = formalize("When running, the alarm shall be on.", variables, [example], api_key="sk-test")
+
+    assert result.pt_formula == "(H ((mode = run) -> alarm))"
+    assert result.ft_formula == "(G ((mode = run) -> alarm))"
+    prompt = client.messages.calls[0]["messages"][0]["content"]
+    assert "mode: enum, input, values {idle, run}" in prompt
+    assert "(H (mode = idle))" in prompt
+    assert "When running, the alarm shall be on." in prompt
+
+
+def test_formalize_schema_has_no_unsupported_min_items():
+    from ltlsplitter.core.llm_decompose import _FORMALIZE_SCHEMA
+    assert "minItems" not in json.dumps(_FORMALIZE_SCHEMA)
