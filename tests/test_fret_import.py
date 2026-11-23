@@ -181,3 +181,28 @@ def test_save_session_works_without_a_json_source(tmp_path):
     save_session(fret_import, output, source_path=tmp_path / "model.smv")
 
     assert import_fret_file(output).requirement("r1").pt_formula == "(H a)"
+
+
+def test_untyped_variables_get_their_type_from_how_the_formulas_use_them(tmp_path):
+    """FRET leaves dataType empty for unmapped variables (every variable in the real UseCase6
+    export). Defaulting those to integer made nuXmv reject "! x" and Spot/SPIN refuse the
+    atoms, so nothing was actually checked."""
+    source = tmp_path / "untyped.json"
+    source.write_text(json.dumps({
+        "requirements": [{"reqid": "r1", "fulltext": "", "semantics": {
+            "pt": "(H ((u & (speed > 3)) -> ((! d) | (kias <= 70.5))))",
+            "ft": "(G ((u & (speed > 3)) -> ((! d) | (kias <= 70.5))))"}}],
+        "variables": [{"variable_name": n, "dataType": "", "idType": ""} for n in ("u", "d", "speed", "kias", "unused")],
+    }))
+
+    types = {v.name: v.type for v in import_fret_file(source).variables}
+
+    assert types == {"u": VariableType.BOOL, "d": VariableType.BOOL, "speed": VariableType.INT,
+                     "kias": VariableType.FLOAT, "unused": VariableType.BOOL}
+
+
+def test_type_inference_is_not_fooled_by_biconditionals_and_implications():
+    from ltlsplitter.core.fret_import import infer_variable_type
+
+    formulas = ["(G ((a <-> b) -> c))", "(H (b <-> a))"]
+    assert {infer_variable_type(n, formulas) for n in "abc"} == {VariableType.BOOL}

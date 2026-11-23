@@ -61,6 +61,27 @@ def _ft_formula(semantics: dict) -> str:
     return semantics.get("ftInfAUExpanded") or semantics.get("ftExpanded") or semantics.get("ft") or ""
 
 
+_COMPARISON_OPS = r"(?:<=|>=|!=|=|<(?!-)|(?<![-<])>)"
+_NUMBER_RE = r"-?\d+(?:\.\d+)?"
+
+
+def infer_variable_type(name: str, formulas: list[str]) -> VariableType:
+    """Type of a variable FRET left untyped, from how the formulas use it: a variable that is
+    only ever used as a truth value ("! x", "x -> y") is boolean; one compared with a number is
+    an integer (or float, for a decimal). Without this, untyped variables became integers and
+    nuXmv rejected every "! x" with "illegal operand type", and Spot/SPIN refused the atoms."""
+    escaped = re.escape(name)
+    compared = re.compile(
+        rf"\b{escaped}\s*{_COMPARISON_OPS}\s*(?P<a>[^\s()]+)|(?P<b>[^\s()]+)\s*{_COMPARISON_OPS}\s*{escaped}\b"
+    )
+    other_sides = [m.group("a") or m.group("b") for f in formulas for m in compared.finditer(f)]
+    if not other_sides:
+        return VariableType.BOOL
+    if any(re.fullmatch(_NUMBER_RE, o) and "." in o for o in other_sides):
+        return VariableType.FLOAT
+    return VariableType.INT
+
+
 def import_fret_file(path: str | Path) -> FretImport:
     """Parses a FRET project export JSON (FRET's own "Export Requirements/Variables as JSON"
     format: a top-level {"requirements": [...], "variables": [...]} object) into our model."""
@@ -95,12 +116,22 @@ def import_fret_file(path: str | Path) -> FretImport:
             )
         )
 
+    formulas = [f for r in requirements for f in (r.pt_formula, r.ft_formula) if f]
     variables = []
     for var in data["variables"]:
+        data_type = _normalize_type_field(var.get("dataType"))
+        if data_type in _DATA_TYPE_MAP:
+            var_type = _DATA_TYPE_MAP[data_type]
+        elif not data_type:
+            # FRET leaves dataType empty until the variable is mapped in its Variable Mapping
+            # view (seen in the real UseCase6 export: every variable untyped).
+            var_type = infer_variable_type(var["variable_name"], formulas)
+        else:
+            var_type = VariableType.INT
         variables.append(
             Variable(
                 name=var["variable_name"],
-                type=_DATA_TYPE_MAP.get(_normalize_type_field(var.get("dataType")), VariableType.INT),
+                type=var_type,
                 role=_ID_TYPE_MAP.get(_normalize_type_field(var.get("idType")), VariableRole.INPUT),
                 assignment=var.get("assignment") or None,
                 copilot_assignment=var.get("copilotAssignment") or None,

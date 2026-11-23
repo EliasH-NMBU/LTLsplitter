@@ -361,3 +361,50 @@ def test_validate_decomposition_fast_path_for_literally_unchanged_single_formula
     result = validate_decomposition("(H a)", "(G a)", sub_formulas, [])
 
     assert all(r.passed for r in result.equivalence)
+
+
+# -- UseCase6 regressions: checks that only looked at the first step ---------------------------
+
+_UC6_VARS = [Variable(name="u", type=VariableType.BOOL), Variable(name="d", type=VariableType.BOOL)]
+_UC6_PT = "((H (! u)) | (! ((! d) S ((! d) & (u & ((Y (! u)) | (! (Y TRUE))))))))"
+_UC6_FT = "((G (((! u) & (X u)) -> (X (F d)))) & (u -> (F d)))"
+_UC6_EDGE = SubFormula("r.1", "(! ((! d) S ((! d) & (u & (Y (! u))))))", "(G (((! u) & (X u)) -> (X (F d))))")
+_UC6_INIT = SubFormula("r.2", "(! ((! d) S ((! d) & (u & (! (Y TRUE))))))", "(u -> (F d))")
+
+
+@requires_nuxmv
+@requires_spot
+@requires_spin
+def test_fret_when_pattern_split_into_edge_and_initial_case_validates_on_every_tool():
+    """UC6_R_16's real split. nuXmv used to compare the pt forms only at step 0 (calling the
+    initial-case part alone equivalent to the whole), and SPIN's model only ever started from
+    all-true/all-false (calling the edge-case part alone equivalent)."""
+    result = validate_decomposition(_UC6_PT, _UC6_FT, [_UC6_EDGE, _UC6_INIT], _UC6_VARS)
+
+    assert [(r.tool, r.passed) for r in result.equivalence] == [("nuXmv", True), ("Spot", True), ("SPIN", True)]
+    for sub_id, results in result.nondegeneracy.items():
+        assert all(r.passed for r in results), (sub_id, [(r.tool, r.details[:200]) for r in results])
+    assert result.all_passed
+
+
+@requires_nuxmv
+def test_nuxmv_checks_pt_equivalence_at_every_step_not_only_the_first():
+    """Equal at step 0 (both say "u held at the first step implies d since"), different later."""
+    result = validate_decomposition(_UC6_PT, _UC6_FT, [_UC6_INIT], _UC6_VARS)
+    assert next(r for r in result.equivalence if r.tool == "nuXmv").passed is False
+
+
+@requires_spin
+def test_spin_finds_counterexamples_at_the_first_step():
+    # Fails only at step 0 with u true and d false forever -- not reachable from a fixed
+    # all-true or all-false start.
+    assert _check_tautology_spin("(u -> (F d)) <-> (G (((! u) & (X u)) -> (X (F d))))", _UC6_VARS).status == "not_tautology"
+    assert _check_tautology_spin("u", _UC6_VARS).status == "not_tautology"
+    assert _check_tautology_spin("(! u) | u", _UC6_VARS).status == "tautology"
+
+
+@requires_nuxmv
+def test_numeric_declared_variable_used_as_boolean_gives_a_readable_nuxmv_error():
+    check = _check_tautology_nuxmv("(! d) <-> (! d & TRUE)", [Variable(name="d", type=VariableType.INT)])
+    assert check.status == "error"
+    assert "declared as a number" in check.details

@@ -137,6 +137,10 @@ def _as_nondegeneracy_result(tool: str, check: _TautologyCheck) -> ToolCheckResu
 
 # -- nuXmv: both pt and ft use H/G-style LTL nuXmv understands natively -----------------------
 
+_TYPE_HINT = (
+    "If these are really booleans, the file declares them with a numeric dataType (or none, in "
+    "an older export of this project) -- fix the dataType in the FRET file and re-import."
+)
 _NUXMV_TAUTOLOGY_RE = re.compile(r"-- specification .* is (true|false)")
 
 
@@ -185,6 +189,13 @@ def _check_tautology_nuxmv(formula: str, variables: list[Variable]) -> _Tautolog
         return _TautologyCheck("error", f"nuXmv timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s.")
     match = _NUXMV_TAUTOLOGY_RE.search(output)
     if not match:
+        type_error = re.search(r"illegal operand types? of [^\n]*", output)
+        if type_error:
+            return _TautologyCheck(
+                "error",
+                f"nuXmv rejected the variable types ({type_error.group(0).strip()}): a variable "
+                f"used as a truth value is declared as a number. {_TYPE_HINT}",
+            )
         return _TautologyCheck("error", f"Couldn't parse nuXmv output:\n{output[-1500:]}")
     if match.group(1) == "true":
         return _TautologyCheck("tautology")
@@ -217,7 +228,7 @@ def _check_tautology_spot(formula: str, variables: list[Variable]) -> _Tautology
             "error",
             "Spot only supports purely-boolean atomic propositions or simple \"variable OP "
             "literal\"/\"variable OP variable\" comparisons -- couldn't handle: "
-            f"{', '.join(leftover)}.",
+            f"{', '.join(leftover)}. {_TYPE_HINT}",
         )
     quoted_formula = formula
     for comparison in comparisons:
@@ -361,7 +372,7 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
             "error",
             "SPIN's free model here only supports purely-boolean atomic propositions or simple "
             "\"variable OP literal\"/\"variable OP variable\" comparisons -- couldn't handle: "
-            f"{', '.join(leftover)}.",
+            f"{', '.join(leftover)}. {_TYPE_HINT}",
         )
 
     try:
@@ -381,9 +392,15 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
     # subprocess call below) so a timeout becomes just *this tool's* "error" result, the same as
     # a missing binary -- without this, an uncaught TimeoutExpired propagates out of
     # validate_decomposition entirely and discards nuXmv/Spot's results too, not just SPIN's.
+    # The model's declared starting values are a fixed, dummy state 0 -- the never claim is
+    # evaluated against it before any nondeterministic step -- so the formula is checked from
+    # step 1 on ("X"), where every valuation is reachable. Without this, step 0 was only ever
+    # all-true or all-false, which missed counterexamples that live at the first step (found on
+    # UseCase6: SPIN called "u -> F d" plus the edge case equivalent to the edge case alone,
+    # because "u true, d false at step 0" was never explored).
     try:
         never_claim = subprocess.run(
-            [str(spin), "-f", _to_spin_syntax(f"!({formula})")],
+            [str(spin), "-f", _to_spin_syntax(f"!(X ({formula}))")],
             capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
@@ -400,6 +417,12 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
     # own `_promela_model` output is untouched, since its "state = 1" lines are genuine
     # assignment statements, not comparisons.
     never_claim_text = never_claim.stdout
+    # spin -f simplifies an unsatisfiable negation to a claim whose only guard is "false" --
+    # the formula is a tautology. Checked here because pan then (correctly) explores nothing,
+    # which the depth check below would otherwise report as "no verdict".
+    guards = re.findall(r"::\s*(?:atomic\s*\{\s*)?\(([^)]*)\)", never_claim_text)
+    if guards and all(g.strip() == "false" for g in guards):
+        return _TautologyCheck("tautology")
     for comparison in comparisons:
         # only a bare "=" (equality) needs upgrading -- "!=", "<=", ">=" are already valid
         # Promela as-is and must be left alone.
@@ -495,6 +518,19 @@ def _check_tautology_spin(formula: str, variables: list[Variable]) -> _Tautology
 # -- orchestration --------------------------------------------------------------------------
 
 
+def _at_every_step(pt_formula: str) -> str:
+    """A past-time formula is a property of each trace prefix -- the runtime monitor evaluates
+    it at every step -- but an LTLSPEC is only evaluated at the initial state. Checking a pt
+    biconditional bare therefore only compared the two sides at step 0, where e.g. "the trigger
+    held at the first step" and "the trigger just rose" can't be told apart (found on UseCase6:
+    nuXmv called UC6_R_16.2 alone equivalent to all of UC6_R_16). G makes it every step. The
+    trivial-tautology fast path still sees through it via _is_trivial_tautology's own check on
+    the unwrapped text."""
+    if _is_trivial_tautology(pt_formula):
+        return pt_formula
+    return f"G ({pt_formula})"
+
+
 def _check_all_tools(pt_formula: str, ft_formula: str, variables: list[Variable]) -> list[tuple[str, _TautologyCheck]]:
     # Only nuXmv supports past-time operators (H/O/S/Y) -- confirmed against the real binaries,
     # not assumed. Spot and SPIN both only parse future-time LTL, so they validate the ft form.
@@ -502,7 +538,7 @@ def _check_all_tools(pt_formula: str, ft_formula: str, variables: list[Variable]
     # paths an exact self-comparison via _is_trivial_tautology on its own -- not repeated here
     # -- so a direct call to one of them gets the same protection as going through here.)
     return [
-        ("nuXmv", _check_tautology_nuxmv(pt_formula, variables)),
+        ("nuXmv", _check_tautology_nuxmv(_at_every_step(pt_formula), variables)),
         ("Spot", _check_tautology_spot(ft_formula, variables)),
         ("SPIN", _check_tautology_spin(ft_formula, variables)),
     ]
