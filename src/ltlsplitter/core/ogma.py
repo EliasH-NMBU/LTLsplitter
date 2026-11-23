@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -119,6 +120,33 @@ def _build_expressions_json(specs: list[Specification], variables: list[Variable
     }
 
 
+_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+
+
+def variables_used_by(specs: list[Specification], variables: list[Variable]) -> list[Variable]:
+    """The variables a monitor for `specs` actually needs, in declaration order: every variable
+    the formulas mention, plus -- transitively -- whatever an internal variable's defining
+    expression mentions (dgt_7 := distance_to_target > 7 still needs the distance topic).
+
+    Without this, every group's monitor subscribed to every project variable, so each monitor
+    received and ran step() on every message on every topic. That per-message cost dominates a
+    monitor's load (measured on sRobot: ~28 us per message, almost independent of how many
+    requirements it checks), so a group only pays off if it receives only its own topics."""
+    by_name = {v.name: v for v in variables}
+    needed: set[str] = set()
+    frontier = {t for spec in specs for t in _IDENTIFIER_RE.findall(spec.ltl_formula or "") if t in by_name}
+    while frontier:
+        needed |= frontier
+        next_frontier = set()
+        for name in frontier:
+            var = by_name[name]
+            if var.role == VariableRole.INTERNAL:
+                for expr in (var.assignment, var.copilot_assignment):
+                    next_frontier |= {t for t in _IDENTIFIER_RE.findall(expr or "") if t in by_name}
+        frontier = next_frontier - needed
+    return [v for v in variables if v.name in needed]
+
+
 def _build_variable_db(variables: list[Variable]) -> dict:
     """Only Input/Output variables are subscribed to as ROS topics -- Internal variables are
     derived at runtime from their `meaning` expression (see _build_expressions_json), not
@@ -156,7 +184,9 @@ def generate_ros2_monitor(
         raise ValueError("No spec with an LTL formula to generate a monitor from.")
 
     ogma = _find_ogma()
-    variables = variables or []
+    # Only what these specs use -- see variables_used_by: subscribing a monitor to topics its
+    # requirements never read only costs it a callback and a step() per message.
+    variables = variables_used_by(specs, variables or [])
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)

@@ -100,3 +100,30 @@ def test_generate_internal_variable_is_derived_not_subscribed(tmp_path):
 
     copilot_hs = (tmp_path / "copilot" / "src" / "Copilot.hs").read_text()
     assert "distance_to_target > constant 3" in copilot_hs
+
+
+def test_variables_used_by_keeps_only_referenced_and_internal_dependencies():
+    from ltlsplitter.core.models import Specification, Variable, VariableRole, VariableType
+    from ltlsplitter.core.ogma import variables_used_by
+
+    variables = [
+        Variable("alert", VariableType.BOOL, role=VariableRole.OUTPUT),
+        Variable("classifier", VariableType.INT),
+        Variable("dgt_7", VariableType.BOOL, role=VariableRole.INTERNAL,
+                 assignment="distance_to_target > 7", copilot_assignment="distance_to_target > constant 7"),
+        Variable("distance_to_target", VariableType.INT),
+        Variable("state", VariableType.INT, role=VariableRole.OUTPUT),
+    ]
+    specs = [Specification("state_req101", "(H ((classifier = 1) -> (dgt_7 -> (state = 1))))")]
+
+    used = [v.name for v in variables_used_by(specs, variables)]
+
+    assert used == ["classifier", "dgt_7", "distance_to_target", "state"]  # not alert
+
+
+def test_variables_used_by_ignores_substrings_of_other_names():
+    from ltlsplitter.core.models import Specification, Variable, VariableType
+    from ltlsplitter.core.ogma import variables_used_by
+
+    variables = [Variable("halt", VariableType.BOOL), Variable("halted", VariableType.BOOL)]
+    assert [v.name for v in variables_used_by([Specification("r", "(H halted)")], variables)] == ["halted"]
