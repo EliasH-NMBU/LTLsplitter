@@ -34,6 +34,9 @@ class ProjectState:
     whatever else changes the current selection; a reqid is removed the moment that
     requirement's split is actually accepted or rejected, since the recommendation has then
     been acted on and showing it as still-pending would be misleading."""
+    search_results: dict[str, SplitSuggestion] = field(default_factory=dict)
+    """Every verdict from the last "LTLsplit search", keyed by reqid -- including the "no split"
+    ones, so selecting any searched requirement shows why, not just the highlighted ones."""
     split_suggestion: SplitSuggestion | None = None
     split_accepted: bool = False
     sub_formulas: list[SubFormula] = field(default_factory=list)

@@ -737,6 +737,7 @@ def test_search_flags_only_requirements_the_llm_recommends_splitting(qtbot, monk
         return SplitSuggestion(should_split=(pt == "(H a)"), rationale="x", suggested_count=2)
 
     monkeypatch.setattr("ltlsplitter.gui.pages.import_split.suggest_split", fake_suggest_split)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: None)
     state = _state_with_two_requirements()
     page = ImportSplitPage(state)
     qtbot.addWidget(page)
@@ -817,3 +818,75 @@ def test_editing_in_both_view_allows_disjunction_in_formulas(qtbot):
     page.sub_formula_list.item(0).setText("r1.1 | pt: (H (a | c)) | ft: (G (a | c))")
 
     assert state.sub_formulas[0] == SubFormula(id="r1.1", pt_formula="(H (a | c))", ft_formula="(G (a | c))")
+
+
+def _state_with_unformalized_requirement() -> ProjectState:
+    state = _state_with_two_requirements()
+    state.fret_import.requirements.append(FretRequirement(reqid="r3", fulltext="todo", pt_formula="", ft_formula=""))
+    return state
+
+
+def test_search_reports_a_summary_even_when_nothing_is_recommended(qtbot, monkeypatch):
+    """Regression: a search where the LLM kept every requirement whole used to end silently --
+    indistinguishable from a search that never ran."""
+    asked = []
+
+    def fake_suggest_split(pt, ft, api_key=None):
+        asked.append(pt)
+        return SplitSuggestion(should_split=False, rationale="single obligation", suggested_count=1,
+                               refactoring_opportunity="lazy_requirement")
+
+    monkeypatch.setattr("ltlsplitter.gui.pages.import_split.suggest_split", fake_suggest_split)
+    summaries = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: summaries.append(a[2]))
+    state = _state_with_unformalized_requirement()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+
+    page._on_search_clicked()
+    qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
+
+    assert len(asked) == 2  # r3 has no formula and is not sent to the LLM
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert "Checked 2 requirement(s)." in summary
+    assert "No split recommended" in summary
+    assert "2 lazy requirement" in summary
+    assert "Skipped 1 with no formula: r3" in summary
+    assert page.search_status_label.text() == summary
+
+
+def test_selecting_a_searched_requirement_shows_the_search_verdict(qtbot, monkeypatch):
+    monkeypatch.setattr(
+        "ltlsplitter.gui.pages.import_split.suggest_split",
+        lambda pt, ft, api_key=None: SplitSuggestion(should_split=False, rationale=f"why {pt}", suggested_count=1),
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: None)
+    state = _state_with_two_requirements()
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+    page.on_show()
+    page._on_search_clicked()
+    qtbot.waitUntil(lambda: page._llm_thread is None, timeout=5000)
+
+    _select(page, "r2")
+
+    assert "LTLsplit search: No split recommended" in page.suggestion_label.text()
+    assert "why (H b)" in page.suggestion_label.text()
+    assert state.split_suggestion is state.search_results["r2"]
+    assert not page.force_split_button.isHidden()
+
+
+def test_search_with_only_unformalized_requirements_says_so(qtbot, monkeypatch):
+    calls = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: calls.append(a[2]))
+    state = ProjectState(fret_import=FretImport(project="p", requirements=[
+        FretRequirement(reqid="r1", fulltext="", pt_formula="", ft_formula="")]))
+    page = ImportSplitPage(state)
+    qtbot.addWidget(page)
+
+    page._on_search_clicked()
+
+    assert "1 have no formula" in calls[0]
+    assert page._llm_thread is None

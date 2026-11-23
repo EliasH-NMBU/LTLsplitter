@@ -192,6 +192,10 @@ class ImportSplitPage(WizardPage):
         assumption_actions_row.addStretch()
         left.addLayout(assumption_actions_row)
 
+        self.search_status_label = QLabel()
+        self.search_status_label.setWordWrap(True)
+        left.addWidget(self.search_status_label)
+
         self.requirement_tree = QTreeWidget()
         self.requirement_tree.setColumnCount(2)
         self.requirement_tree.setHeaderLabels(["Requirement", "Assumption"])
@@ -332,11 +336,13 @@ class ImportSplitPage(WizardPage):
         self.state.session_export_path = ""
         self.state.selected_requirement_id = None
         self.state.recommended_split_reqids = set()
+        self.state.search_results = {}
         self.state.split_suggestion = None
         self.state.split_accepted = False
         self.state.sub_formulas = []
         self.force_split_button.setVisible(False)
         self.save_status_label.clear()
+        self.search_status_label.clear()
         self.import_label.setText(f"{fret_import.project}: {len(fret_import.requirements)} requirement(s)")
         self._refresh_requirement_tree()
 
@@ -464,6 +470,9 @@ class ImportSplitPage(WizardPage):
         self.state.sub_formulas = []
         self.suggestion_label.clear()
         self.force_split_button.setVisible(False)
+        searched = self.state.search_results.get(self.state.selected_requirement_id)
+        if searched is not None:
+            self._show_suggestion(searched, source="LTLsplit search")
         self._refresh_formula_display()
 
     def _refresh_formula_display(self) -> None:
@@ -592,12 +601,18 @@ class ImportSplitPage(WizardPage):
             return
         if self.state.selected_requirement_id != req.reqid:
             return  # selection changed meanwhile -- stale answer
+        self.state.search_results[req.reqid] = suggestion
+        self._show_suggestion(suggestion)
+
+    def _show_suggestion(self, suggestion, source: str = "") -> None:
+        """Shows a verdict for the selected requirement and makes it the one Accept acts on."""
         self.state.split_suggestion = suggestion
         verdict = "Split recommended" if suggestion.should_split else "No split recommended"
         opportunity = suggestion.refactoring_opportunity.replace("_", " ")
         opportunity_text = f" [{opportunity}]" if opportunity and opportunity != "none" else ""
+        prefix = f"{source}: " if source else ""
         self.suggestion_label.setText(
-            f"{verdict}{opportunity_text} (suggested {suggestion.suggested_count} part(s)): {suggestion.rationale}"
+            f"{prefix}{verdict}{opportunity_text} (suggested {suggestion.suggested_count} part(s)): {suggestion.rationale}"
         )
         self.force_split_button.setVisible(not suggestion.should_split)
 
@@ -608,13 +623,24 @@ class ImportSplitPage(WizardPage):
             QMessageBox.information(self, "Nothing to search", "Import a FRET file first.")
             return
         leaves = self.state.fret_import.leaf_requirements()
-        if not leaves:
-            QMessageBox.information(self, "Nothing to search", "No requirements to check.")
+        # FRET exports requirements that were written but never formalized with empty
+        # semantics -- nothing for the LLM to judge, so they're reported as skipped instead.
+        self._search_skipped = [r.reqid for r in leaves if not (r.pt_formula or r.ft_formula)]
+        searchable = [r for r in leaves if r.pt_formula or r.ft_formula]
+        if not searchable:
+            QMessageBox.information(
+                self, "Nothing to search",
+                "No requirement has a formula to check"
+                + (f" ({len(self._search_skipped)} have no formula)." if self._search_skipped else "."),
+            )
             return
 
         api_key = self.api_key_edit.text().strip()
-        self._search_queue = list(leaves)
+        self._search_queue = list(searchable)
         self._search_total = len(self._search_queue)
+        self._search_done: list[FretRequirement] = []
+        set_status(self.search_status_label, None)
+        self.search_status_label.setText(f"Searching {self._search_total} requirement(s)…")
         # Locked for the whole batch, not just one sub-call -- unlike _run_llm, which only
         # ever has one call in flight at a time, this chains many; without a self-managed lock
         # run_in_background would re-enable everything between each pair of calls.
@@ -632,6 +658,7 @@ class ImportSplitPage(WizardPage):
                 widget.setEnabled(True)
             self.search_button.setText("LTLsplit search")
             self._llm_thread = None  # lets _wait_for_llm-style polling see the whole batch as done
+            self._report_search_summary()
             return
         req = self._search_queue.pop(0)
         done = self._search_total - len(self._search_queue)
@@ -649,17 +676,54 @@ class ImportSplitPage(WizardPage):
                 widget.setEnabled(True)
             self.search_button.setText("LTLsplit search")
             self._llm_thread = None
+            set_status(self.search_status_label, "danger")
+            self.search_status_label.setText(
+                f"Search stopped at {req.reqid.strip()} after {len(self._search_done)} of {self._search_total}."
+            )
             if isinstance(exc, MissingAPIKeyError):
                 QMessageBox.information(self, "API key needed", str(exc))
             else:  # surface any Anthropic API/network failure
                 QMessageBox.critical(self, "Search stopped", f"Stopped after a failure on {req.reqid}: {exc}")
             return
+        self.state.search_results[req.reqid] = suggestion
+        self._search_done.append(req)
         if suggestion.should_split:
             self.state.recommended_split_reqids.add(req.reqid)
         else:
             self.state.recommended_split_reqids.discard(req.reqid)
+        if self.state.selected_requirement_id == req.reqid:
+            self._show_suggestion(suggestion, source="LTLsplit search")
         self._refresh_requirement_tree_highlights()
         self._advance_search(api_key)
+
+    def _report_search_summary(self) -> None:
+        """Always says how the search ended -- a run where the LLM recommends nothing would
+        otherwise look exactly like one that never ran."""
+        results = [(r, self.state.search_results[r.reqid]) for r in self._search_done]
+        recommended = [r.reqid.strip() for r, s in results if s.should_split]
+        reasons: dict[str, int] = {}
+        for _r, s in results:
+            if not s.should_split:
+                key = (s.refactoring_opportunity or "none").replace("_", " ")
+                reasons[key] = reasons.get(key, 0) + 1
+
+        lines = [f"Checked {len(results)} requirement(s)."]
+        if recommended:
+            lines.append(f"Split recommended for {len(recommended)} (highlighted): {', '.join(recommended)}.")
+        else:
+            lines.append("No split recommended for any of them.")
+        if reasons:
+            lines.append("Kept whole: " + ", ".join(f"{n} {k}" for k, n in sorted(reasons.items())) + ".")
+        if self._search_skipped:
+            lines.append(
+                f"Skipped {len(self._search_skipped)} with no formula: "
+                + ", ".join(r.strip() for r in self._search_skipped) + "."
+            )
+        lines.append("Select a requirement to see the LLM's reasoning; Force Split is still available.")
+        text = "\n".join(lines)
+        set_status(self.search_status_label, "success" if recommended else "muted")
+        self.search_status_label.setText(text)
+        QMessageBox.information(self, "LTLsplit search finished", text)
 
     def _decompose_and_populate(self, count: int | None) -> None:
         req = self._selected_requirement()
@@ -866,6 +930,8 @@ class ImportSplitPage(WizardPage):
         req.variable_names = referenced_variable_names(req.pt_formula, req.ft_formula, self._declared_names() or set())
         if formulas_changed:
             # Any earlier suggestion/validation was about the old formula.
+            self.state.search_results.pop(req.reqid, None)
+            self.state.recommended_split_reqids.discard(req.reqid)
             self.state.split_suggestion = None
             self.state.validation = None
             self.suggestion_label.clear()
